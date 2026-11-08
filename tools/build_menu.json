@@ -1,0 +1,858 @@
+{
+ "MAIN": [
+  {
+   "category": 1,
+   "type": -1,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP",
+   "label": "Workshops"
+  },
+  {
+   "category": 5,
+   "type": -1,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_FURNITURE",
+   "label": "Furniture"
+  },
+  {
+   "category": 6,
+   "type": -1,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_PORTALS",
+   "label": "Doors/hatches"
+  },
+  {
+   "category": 7,
+   "type": -1,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_CONSTRUCTION",
+   "label": "Constructions"
+  },
+  {
+   "category": 8,
+   "type": -1,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_MACHINE",
+   "label": "Machines/fluids"
+  },
+  {
+   "category": 9,
+   "type": -1,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_CAGES_CHAINS",
+   "label": "Cages/restraints"
+  },
+  {
+   "category": 10,
+   "type": -1,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_TRAP",
+   "label": "Traps"
+  },
+  {
+   "category": 11,
+   "type": -1,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_MILITARY",
+   "label": "Military"
+  },
+  {
+   "category": -1,
+   "type": 6,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_TRADEDEPOT",
+   "label": "Trade depot"
+  }
+ ],
+ "DOORS_HATCHES": [
+  {
+   "category": -1,
+   "type": 8,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_DOOR",
+   "label": "Door"
+  },
+  {
+   "category": -1,
+   "type": 35,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_HATCH",
+   "label": "Hatch"
+  }
+ ],
+ "WORKSHOPS": [
+  {
+   "category": 3,
+   "type": -1,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOPS_CLOTHING_LEATHER",
+   "label": "Clothing and leather"
+  },
+  {
+   "category": 4,
+   "type": -1,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_FARMING",
+   "label": "Farming"
+  },
+  {
+   "category": 2,
+   "type": -1,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_FURNACE",
+   "label": "Furnaces"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 20,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_ASHERY",
+   "label": "Ashery"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 7,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_BOWYER",
+   "label": "Bowyer"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 0,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_CARPENTER",
+   "label": "Carpenter"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 3,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_CRAFTSMAN",
+   "label": "Crafts"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 4,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_JEWELER",
+   "label": "Jeweler"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 6,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_LAVAMILL",
+   "label": "Magma forge"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 8,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_MECHANIC",
+   "label": "Mechanic"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 5,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_METALSMITH",
+   "label": "Metalsmith"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 23,
+   "custom": 1,
+   "hotkey": "CUSTOM_SHIFT_R",
+   "label": "Screw Press"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 9,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_SIEGE",
+   "label": "Siege"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 23,
+   "custom": 0,
+   "hotkey": "CUSTOM_SHIFT_P",
+   "label": "Soap Maker's Workshop"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 2,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_MASON",
+   "label": "Stoneworker"
+  }
+ ],
+ "WORKSHOPS_CLOTHING": [
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 11,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_LEATHER",
+   "label": "Leather"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 16,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_LOOM",
+   "label": "Loom"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 13,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_CLOTHES",
+   "label": "Clothes"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 21,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_DYER",
+   "label": "Dyer"
+  }
+ ],
+ "WORKSHOPS_FARMING": [
+  {
+   "category": -1,
+   "type": 4,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_FARMPLOT",
+   "label": "Farm plot"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 15,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_STILL",
+   "label": "Still"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 10,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_BUTCHER",
+   "label": "Butcher"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 12,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_TANNER",
+   "label": "Tanner"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 14,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_FISHERY",
+   "label": "Fishery"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 19,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_KITCHEN",
+   "label": "Kitchen"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_FARMER",
+   "label": "Farmer"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 17,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_QUERN",
+   "label": "Quern"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 18,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_KENNEL",
+   "label": "Vermin Catcher's Shop"
+  },
+  {
+   "category": -1,
+   "type": 48,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_NEST_BOX",
+   "label": "Nest box"
+  },
+  {
+   "category": -1,
+   "type": 49,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_HIVE",
+   "label": "Hive"
+  }
+ ],
+ "WORKSHOPS_FURNACES": [
+  {
+   "category": -1,
+   "type": 5,
+   "subtype": 2,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_FURNACE_GLASS",
+   "label": "Glass furnace"
+  },
+  {
+   "category": -1,
+   "type": 5,
+   "subtype": 3,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_FURNACE_KILN",
+   "label": "Kiln"
+  },
+  {
+   "category": -1,
+   "type": 5,
+   "subtype": 5,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_FURNACE_GLASS_LAVA",
+   "label": "Magma glass furnace"
+  },
+  {
+   "category": -1,
+   "type": 5,
+   "subtype": 6,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_FURNACE_KILN_LAVA",
+   "label": "Magma kiln"
+  },
+  {
+   "category": -1,
+   "type": 5,
+   "subtype": 4,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_FURNACE_SMELTER_LAVA",
+   "label": "Magma smelter"
+  },
+  {
+   "category": -1,
+   "type": 5,
+   "subtype": 1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_FURNACE_SMELTER",
+   "label": "Smelter"
+  },
+  {
+   "category": -1,
+   "type": 5,
+   "subtype": 0,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_FURNACE_WOOD",
+   "label": "Wood furnace"
+  }
+ ],
+ "FURNITURE": [
+  {
+   "category": -1,
+   "type": 1,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_BED",
+   "label": "Bed"
+  },
+  {
+   "category": -1,
+   "type": 0,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_CHAIR",
+   "label": "Chair"
+  },
+  {
+   "category": -1,
+   "type": 2,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_TABLE",
+   "label": "Table"
+  },
+  {
+   "category": -1,
+   "type": 10,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_BOX",
+   "label": "Chest"
+  },
+  {
+   "category": -1,
+   "type": 14,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_CABINET",
+   "label": "Cabinet"
+  },
+  {
+   "category": -1,
+   "type": 3,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_COFFIN",
+   "label": "Burial"
+  },
+  {
+   "category": -1,
+   "type": 46,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_SLAB",
+   "label": "Slab"
+  },
+  {
+   "category": -1,
+   "type": 15,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_STATUE",
+   "label": "Statue"
+  },
+  {
+   "category": -1,
+   "type": 45,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_TRACTION_BENCH",
+   "label": "Traction bench"
+  },
+  {
+   "category": -1,
+   "type": 52,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_BOOKCASE",
+   "label": "Bookcase"
+  },
+  {
+   "category": -1,
+   "type": 53,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_DISPLAY_FURNITURE",
+   "label": "Display"
+  },
+  {
+   "category": -1,
+   "type": 54,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_OFFERING_PLACE",
+   "label": "Offering place"
+  },
+  {
+   "category": -1,
+   "type": 51,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_INSTRUMENT",
+   "label": "Instrument"
+  }
+ ],
+ "WALLS_FLOORS": [
+  {
+   "category": -1,
+   "type": 34,
+   "subtype": 1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_CONSTRUCTION_WALL",
+   "label": "Wall"
+  },
+  {
+   "category": -1,
+   "type": 34,
+   "subtype": 37,
+   "custom": -1,
+   "hotkey": "NONE",
+   "label": "Reinforced Wall"
+  },
+  {
+   "category": -1,
+   "type": 34,
+   "subtype": 2,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_CONSTRUCTION_FLOOR",
+   "label": "Floor"
+  },
+  {
+   "category": -1,
+   "type": 34,
+   "subtype": 6,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_CONSTRUCTION_RAMP",
+   "label": "Ramp"
+  },
+  {
+   "category": -1,
+   "type": 34,
+   "subtype": 5,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_CONSTRUCTION_STAIR_UPDOWN",
+   "label": "Stairs"
+  },
+  {
+   "category": -1,
+   "type": 19,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_BRIDGE",
+   "label": "Bridge"
+  },
+  {
+   "category": -1,
+   "type": 21,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_ROAD_PAVED",
+   "label": "Paved road"
+  },
+  {
+   "category": -1,
+   "type": 20,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_ROAD_DIRT",
+   "label": "Dirt road"
+  },
+  {
+   "category": -1,
+   "type": 34,
+   "subtype": 0,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_CONSTRUCTION_FORTIFICATION",
+   "label": "Fortification"
+  },
+  {
+   "category": -1,
+   "type": 36,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_GRATE_WALL",
+   "label": "Wall grate"
+  },
+  {
+   "category": -1,
+   "type": 37,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_GRATE_FLOOR",
+   "label": "Floor grate"
+  },
+  {
+   "category": -1,
+   "type": 38,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_BARS_VERTICAL",
+   "label": "Vertical bars"
+  },
+  {
+   "category": -1,
+   "type": 39,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_BARS_FLOOR",
+   "label": "Floor bars"
+  },
+  {
+   "category": -1,
+   "type": 16,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WINDOW_GLASS",
+   "label": "Glass window"
+  },
+  {
+   "category": -1,
+   "type": 17,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WINDOW_GEM",
+   "label": "Gem window"
+  },
+  {
+   "category": -1,
+   "type": 25,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_SUPPORT",
+   "label": "Support"
+  },
+  {
+   "category": -1,
+   "type": 34,
+   "subtype": 21,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_CONSTRUCTION_TRACK",
+   "label": "Track"
+  },
+  {
+   "category": -1,
+   "type": 23,
+   "subtype": 5,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_CONSTRUCTION_TRACK_STOP",
+   "label": "Track stop"
+  }
+ ],
+ "MACHINES_FLUIDS": [
+  {
+   "category": -1,
+   "type": 23,
+   "subtype": 0,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_TRAP_LEVER",
+   "label": "Lever"
+  },
+  {
+   "category": -1,
+   "type": 18,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WELL",
+   "label": "Well"
+  },
+  {
+   "category": -1,
+   "type": 9,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_FLOODGATE",
+   "label": "Floodgate"
+  },
+  {
+   "category": -1,
+   "type": 33,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_MACHINE_SCREW_PUMP",
+   "label": "Screw pump"
+  },
+  {
+   "category": -1,
+   "type": 43,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_MACHINE_WATER_WHEEL",
+   "label": "Water wheel"
+  },
+  {
+   "category": -1,
+   "type": 44,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_MACHINE_WINDMILL",
+   "label": "Windmill"
+  },
+  {
+   "category": -1,
+   "type": 40,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_MACHINE_GEAR_ASSEMBLY",
+   "label": "Gear assembly"
+  },
+  {
+   "category": -1,
+   "type": 41,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_MACHINE_AXLE_HORIZONTAL",
+   "label": "Horizontal axle"
+  },
+  {
+   "category": -1,
+   "type": 42,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_MACHINE_AXLE_VERTICAL",
+   "label": "Vertical axle"
+  },
+  {
+   "category": -1,
+   "type": 13,
+   "subtype": 22,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WORKSHOP_MILLSTONE",
+   "label": "Millstone"
+  },
+  {
+   "category": -1,
+   "type": 50,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_MACHINE_ROLLERS",
+   "label": "Rollers"
+  }
+ ],
+ "CAGES_RESTRAINTS": [
+  {
+   "category": -1,
+   "type": 27,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_CHAIN",
+   "label": "Rope/chain"
+  },
+  {
+   "category": -1,
+   "type": 28,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_CAGE",
+   "label": "Cage"
+  },
+  {
+   "category": -1,
+   "type": 24,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_ANIMALTRAP",
+   "label": "Animal trap"
+  }
+ ],
+ "MILITARY": [
+  {
+   "category": -1,
+   "type": 26,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_ARCHERYTARGET",
+   "label": "Archery target"
+  },
+  {
+   "category": -1,
+   "type": 11,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_WEAPONRACK",
+   "label": "Weapon rack"
+  },
+  {
+   "category": -1,
+   "type": 12,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_ARMORSTAND",
+   "label": "Armor stand"
+  },
+  {
+   "category": -1,
+   "type": 22,
+   "subtype": 1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_SIEGEENGINE_BALLISTA",
+   "label": "Ballista"
+  },
+  {
+   "category": -1,
+   "type": 22,
+   "subtype": 0,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_SIEGEENGINE_CATAPULT",
+   "label": "Catapult"
+  },
+  {
+   "category": -1,
+   "type": 22,
+   "subtype": 2,
+   "custom": -1,
+   "hotkey": "NONE",
+   "label": "Bolt thrower"
+  }
+ ],
+ "TRAPS": [
+  {
+   "category": -1,
+   "type": 23,
+   "subtype": 1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_TRAP_TRIGGER",
+   "label": "Pressure plate"
+  },
+  {
+   "category": -1,
+   "type": 23,
+   "subtype": 3,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_TRAP_STONE",
+   "label": "Stone-fall"
+  },
+  {
+   "category": -1,
+   "type": 23,
+   "subtype": 4,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_TRAP_WEAPON",
+   "label": "Weapon"
+  },
+  {
+   "category": -1,
+   "type": 23,
+   "subtype": 2,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_TRAP_CAGE",
+   "label": "Cage"
+  },
+  {
+   "category": -1,
+   "type": 31,
+   "subtype": -1,
+   "custom": -1,
+   "hotkey": "HOTKEY_BUILDING_TRAP_SPIKE",
+   "label": "Upright weapon/spike"
+  }
+ ]
+}

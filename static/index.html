@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>df-coop</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #0b0b0d;
+    --panel: #15161a;
+    --line: #2a2c33;
+    --text: #d8d8d8;
+    --dim: #888;
+    --accent: #e0b050;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 13px/1.4 "DejaVu Sans Mono", "Cascadia Mono", Menlo, monospace; }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+  #top { display: flex; gap: 16px; align-items: center; padding: 6px 12px;
+    background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  #top b { color: var(--accent); }
+  #main { flex: 1; display: flex; min-height: 0; }
+  #wrap { flex: 1; position: relative; min-width: 0; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair;
+    image-rendering: pixelated; touch-action: none; }
+  canvas.dragging { cursor: grabbing; }
+  #top button { font: inherit; color: var(--text); background: #22242a; border: 1px solid var(--line);
+    border-radius: 4px; min-width: 34px; min-height: 30px; padding: 0 8px; cursor: pointer; }
+  #top button:active { background: #33363e; }
+  #graphics { font: inherit; color: var(--text); background: #22242a; border: 1px solid var(--line);
+    border-radius: 4px; min-height: 30px; max-width: 180px; }
+  .zctl { display: flex; align-items: center; gap: 6px; }
+  #menu { display: none; margin-left: auto; }
+  #toolbar { display: flex; gap: 6px; align-items: center; padding: 5px 12px; overflow-x: auto;
+    background: var(--panel); border-bottom: 1px solid var(--line); white-space: nowrap; }
+  #toolbar button, #pausebtn { font: inherit; color: var(--text); background: #22242a;
+    border: 1px solid var(--line); border-radius: 4px; min-height: 30px; padding: 0 10px; cursor: pointer; }
+  #toolbar button.on { background: var(--accent); color: #111; border-color: var(--accent); }
+  #toolbar .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
+  #toolbar kbd { opacity: .55; font-size: 11px; margin-left: 4px; }
+  #pausebtn:disabled { opacity: .6; cursor: default; }
+  #toolbar button:disabled, #side h2 button:disabled, #chatinput:disabled { opacity: .4; cursor: not-allowed; }
+  .player .role { color: var(--dim); font-size: 11px; }
+  #role { color: var(--dim); }
+  #hint { color: var(--dim); }
+  #prio { display: inline-flex; align-items: center; gap: 4px; color: var(--dim); }
+  #prio[hidden] { display: none; }
+  #prio button { min-width: 26px; padding: 0 6px; }
+  #prio b { color: var(--text); min-width: 1ch; text-align: center; }
+  #toast { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); padding: 6px 12px;
+    background: rgba(21, 22, 26, .95); border: 1px solid var(--line); border-radius: 6px;
+    pointer-events: none; opacity: 0; transition: opacity .25s; max-width: 90%; }
+  #toast.show { opacity: 1; }
+  #toast.bad { border-color: #ff6666; color: #ffb0b0; }
+  #palette { display: none; position: absolute; left: 8px; top: 8px; width: min(360px, calc(100% - 16px));
+    max-height: calc(100% - 16px); overflow-y: auto; background: rgba(21, 22, 26, .97);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px; z-index: 5; }
+  #palette.open { display: block; }
+  #palette .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+  #palette .tabs button, #palette .items button { font: inherit; color: var(--text); background: #22242a;
+    border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; cursor: pointer; }
+  #palette .tabs button.on { background: var(--accent); color: #111; border-color: var(--accent); }
+  #palette .items { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px; }
+  #palette .items button { text-align: left; }
+  #palette .items small { color: var(--dim); }
+  #palette kbd { font-size: 11px; opacity: .7; margin-left: 4px; }
+  #palette .items button kbd { float: right; }
+  #date { color: var(--dim); }
+  #away { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, .55); z-index: 8; padding: 16px; }
+  #away[hidden] { display: none; }
+  #away .card { width: min(560px, 100%); max-height: 100%; overflow-y: auto; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  #away h3 { margin: 0 0 4px; color: var(--accent); font-weight: normal; }
+  #away .span { color: var(--dim); margin-bottom: 10px; }
+  #away h4 { margin: 12px 0 4px; font-weight: normal; color: var(--dim); text-transform: uppercase;
+    font-size: 11px; letter-spacing: .08em; }
+  #away ul { margin: 0; padding-left: 18px; }
+  #away button { margin-top: 12px; font: inherit; color: #111; background: var(--accent); border: 0;
+    border-radius: 4px; padding: 6px 12px; cursor: pointer; }
+  #tapinfo { display: none; position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 6px 10px;
+    background: rgba(21, 22, 26, .92); border: 1px solid var(--line); border-radius: 6px;
+    pointer-events: none; white-space: pre-wrap; }
+  #side { width: 240px; background: var(--panel); border-left: 1px solid var(--line);
+    padding: 10px 12px; overflow-y: auto; }
+  #side h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--dim); margin: 14px 0 6px; font-weight: normal; }
+  #side h2:first-child { margin-top: 0; }
+  .player { display: flex; align-items: center; gap: 8px; padding: 3px 4px; cursor: pointer;
+    border-radius: 3px; }
+  .player:hover { background: #22242a; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  .where { margin-left: auto; color: var(--dim); }
+  #hover { white-space: pre-wrap; min-height: 3em; }
+  #side h2 button { float: right; font: inherit; font-size: 11px; text-transform: none; letter-spacing: 0;
+    color: var(--text); background: #22242a; border: 1px solid var(--line); border-radius: 3px;
+    padding: 0 6px; cursor: pointer; }
+  #orderform { display: grid; gap: 6px; margin-bottom: 8px; }
+  #orderform[hidden] { display: none; }
+  #orderform select, #orderform input, #orderform button { font: inherit; color: var(--text);
+    background: #22242a; border: 1px solid var(--line); border-radius: 3px; padding: 3px 4px; width: 100%; }
+  #orderform .row { display: flex; gap: 6px; }
+  #orders { max-height: 40vh; overflow-y: auto; }
+  #orderfilter { width: 100%; font: inherit; color: var(--text); background: #22242a;
+    border: 1px solid var(--line); border-radius: 3px; padding: 3px 6px; margin-bottom: 6px; }
+  #orderfilter[hidden] { display: none; }
+  #reports { max-height: 35vh; overflow-y: auto; }
+  #chatlog { max-height: 28vh; overflow-y: auto; margin-bottom: 6px; }
+  .chatline { padding: 1px 0; word-wrap: break-word; }
+  .chatline b { font-weight: normal; }
+  .chatline.go { cursor: pointer; }
+  .chatline.go:hover { background: #1d1f25; }
+  #chatinput { width: 100%; font: inherit; color: var(--text); background: #22242a;
+    border: 1px solid var(--line); border-radius: 3px; padding: 4px 6px; }
+  #chatflash { position: absolute; left: 8px; bottom: 8px; max-width: min(520px, calc(100% - 16px));
+    padding: 5px 10px; background: rgba(21, 22, 26, .92); border: 1px solid var(--line); border-radius: 6px;
+    pointer-events: none; opacity: 0; transition: opacity .3s; }
+  #chatflash.show { opacity: 1; }
+  @media (max-width: 700px) { #chatflash { bottom: 64px; } }
+  .report { padding: 3px 0; border-bottom: 1px solid #1f2026; }
+  .report.go { cursor: pointer; }
+  .report.go:hover { background: #1d1f25; }
+  .report small { display: block; color: var(--dim); }
+  #unitinfo .uname { color: var(--accent); }
+  #unitinfo .dim { color: var(--dim); }
+  .order { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+  .order .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .order .count { color: var(--dim); }
+  .order button { font: inherit; color: var(--dim); background: none; border: none; cursor: pointer; padding: 0 2px; }
+  .order button:hover { color: #ff7777; }
+  .order button.name { color: var(--text); text-align: left; }
+  .order button.name:hover { color: var(--accent); }
+  .order.open button.name { white-space: normal; }
+  .order .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--dim); }
+  .order .dot.active { background: #55ff88; }
+  .order .dot.waiting { background: #ffdd33; }
+  .orderedit { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; padding: 4px 0 8px 13px;
+    border-bottom: 1px solid #1f2026; }
+  .orderedit ul { margin: 0; padding-left: 14px; color: var(--dim); }
+  .orderedit .row { display: flex; gap: 5px; min-width: 0; }
+  .orderedit input, .orderedit select, .orderedit button { font: inherit; color: var(--text); background: #22242a;
+    border: 1px solid var(--line); border-radius: 3px; padding: 2px 4px; min-width: 0; }
+  .orderedit input { width: 52px; flex: none; }
+  .orderedit select { flex: 1; }
+  .orderedit button { cursor: pointer; }
+  .orderedit .row button[data-to] { flex: 1; }
+  #squads { max-height: 45vh; overflow-y: auto; }
+  .squad { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+  .squad button.name { flex: 1; min-width: 0; font: inherit; color: var(--text); background: none; border: none;
+    cursor: pointer; padding: 0 2px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .squad button.name:hover { color: var(--accent); }
+  .squad.open button.name { white-space: normal; }
+  .squad .count { color: var(--dim); }
+  .squadedit { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; padding: 4px 0 8px 8px;
+    border-bottom: 1px solid #1f2026; }
+  .squadedit .count { color: var(--dim); }
+  .squadedit .member { display: flex; align-items: center; gap: 4px; }
+  .squadedit .member .who { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .squadedit .member button { font: inherit; color: var(--dim); background: none; border: none; cursor: pointer; padding: 0 2px; }
+  .squadedit .member button:hover { color: #ff7777; }
+  .squadedit .row { display: flex; gap: 5px; min-width: 0; }
+  .squadedit input, .squadedit select, .squadedit .row button { font: inherit; color: var(--text); background: #22242a;
+    border: 1px solid var(--line); border-radius: 3px; padding: 2px 4px; min-width: 0; }
+  .squadedit input, .squadedit select { flex: 1; }
+  .squadedit .row button { cursor: pointer; }
+  #nobles { max-height: 45vh; overflow-y: auto; }
+  .noble { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; }
+  .noble button.name { flex: none; max-width: 55%; font: inherit; color: var(--text); background: none; border: none;
+    cursor: pointer; padding: 0 2px; text-align: left; }
+  .noble button.name:hover { color: var(--accent); }
+  .noble .who { flex: 1; min-width: 0; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .noble .who.vacant { color: #ffdd33; }
+  .nobleedit { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; padding: 4px 0 8px 8px;
+    border-bottom: 1px solid #1f2026; overflow-wrap: anywhere; }
+  .nobleedit .count { color: var(--dim); }
+  .nobleedit .row { display: flex; gap: 5px; min-width: 0; }
+  .nobleedit select, .nobleedit .row button { font: inherit; color: var(--text); background: #22242a;
+    border: 1px solid var(--line); border-radius: 3px; padding: 2px 4px; min-width: 0; }
+  .nobleedit select { flex: 1; }
+  .nobleedit .row button { cursor: pointer; }
+  .keys { color: var(--dim); }
+  .keys kbd { color: var(--text); background: #22242a; border: 1px solid var(--line);
+    border-radius: 3px; padding: 0 4px; }
+  #gate { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: var(--bg); padding: 16px; }
+  #gate div { max-width: 420px; }
+  #gate input { width: 100%; padding: 6px; background: var(--panel); color: var(--text);
+    border: 1px solid var(--line); font: inherit; margin: 8px 0; }
+  .offline { color: #ff6666; }
+  @media (max-width: 700px) {
+    #top { gap: 10px; padding: 6px 8px; }
+    #side { display: none; position: fixed; right: 0; top: 0; bottom: 0; width: min(280px, 85vw);
+      z-index: 10; box-shadow: -8px 0 24px rgba(0, 0, 0, .5); }
+    #side.open { display: block; }
+    #menu { display: inline-block; }
+    #tapinfo.show { display: block; }
+    .desk { display: none; }
+    #toolbar { padding: 5px 8px; }
+    #toolbar kbd, #hint { display: none; }
+  }
+  @media (hover: none) { .desk { display: none; } }
+  @media (hover: hover) { .touch { display: none; } }
+</style>
+</head>
+<body>
+<div id="top">
+  <span><b>df-coop</b></span>
+  <span class="zctl"><button id="zdown" title="Down a level (>)">▼</button><span id="zlabel">z —</span><button id="zup" title="Up a level (<)">▲</button></span>
+  <span id="clock">—</span>
+  <span id="date"></span>
+  <span id="conn">connecting…</span>
+  <span id="role"></span>
+  <label>Graphics <select id="graphics" aria-label="Map graphics">
+    <option value="text">Text glyphs</option>
+    <option value="steam" disabled>Steam tiles (loading…)</option>
+  </select></label>
+  <button id="menu" title="Players">☰</button>
+</div>
+<div id="toolbar">
+  <button id="pausebtn">⏸ Pause<kbd>Space</kbd></button>
+  <span class="sep"></span>
+  <button data-mode="look" class="on" title="Look around (Esc)">Look<kbd>Esc</kbd></button>
+  <button data-mode="dig" title="Mine out walls (m)">Dig<kbd>m</kbd></button>
+  <button data-mode="channel" title="Dig a channel down to the level below (m, then u)">Channel<kbd>u</kbd></button>
+  <button data-mode="updown" title="Up/down stairs (m, then t; t again cycles to down and up stairs)">Stairs ⇅<kbd>t</kbd></button>
+  <button data-mode="down" title="Downward stairs (m, then t t)">Down ▼<kbd>t</kbd></button>
+  <button data-mode="up" title="Upward stairs (m, then t t t)">Up ▲<kbd>t</kbd></button>
+  <button data-mode="ramp" title="Ramp (m, then r)">Ramp<kbd>r</kbd></button>
+  <button data-mode="erase" title="Remove designations (x)">Erase<kbd>x</kbd></button>
+  <span id="prio" hidden title="Designation priority: 1 is done first, 7 last (DF's default is 4)">Priority
+    <button id="priominus" title="More urgent (p)">−</button><b id="prioval">4</b><button id="prioplus" title="Less urgent (P)">+</button><kbd>p P</kbd></span>
+  <span class="sep"></span>
+  <button id="buildbtn" title="Place furniture, workshops, stockpiles and zones (b; p stockpiles, z zones)">Build ▾<kbd>b</kbd></button>
+  <button data-mode="remove" title="Remove a building, stockpile or zone: click it (Shift+X)">Remove<kbd>X</kbd></button>
+  <span class="sep"></span>
+  <button data-mode="ping" title="Point everyone at a tile (g pings under the cursor)">Ping<kbd>g</kbd></button>
+  <span id="hint"></span>
+</div>
+<div id="main">
+  <div id="wrap"><canvas id="map"></canvas><div id="toast"></div><div id="chatflash"></div>
+  <div id="away" hidden><div class="card"><h3>While you were away</h3><div class="span" id="awayspan"></div>
+    <div id="awaybody"></div><button id="awayclose">Back to the fortress</button></div></div><div id="palette"><div class="tabs"></div><div class="items"></div></div><div id="tapinfo"></div></div>
+  <div id="side">
+    <h2>Chat</h2>
+    <div id="chatlog"></div>
+    <input id="chatinput" maxlength="300" placeholder="Say something (Enter)" autocomplete="off">
+    <h2>Players</h2>
+    <div id="players"></div>
+    <h2>Work orders <button id="neworder" title="Queue a new work order">+ New</button></h2>
+    <div id="orderform" hidden>
+      <select id="orderpick"></select>
+      <div class="row"><select id="ordermat"></select><input id="orderamt" type="number" min="1" max="999" value="10"></div>
+      <select id="orderfreq" title="How often the order repeats"></select>
+      <button id="orderqueue">Queue order</button>
+    </div>
+    <input id="orderfilter" type="search" placeholder="Filter orders" aria-label="Filter work orders" hidden>
+    <div id="orders"><span class="count">—</span></div>
+    <h2>Squads</h2>
+    <div id="squads"><span class="count">—</span></div>
+    <h2>Nobles</h2>
+    <div id="nobles"><span class="count">—</span></div>
+    <h2>Under cursor</h2>
+    <div id="hover">—</div>
+    <h2>Creature</h2>
+    <div id="unitinfo"><span class="dim">click a creature to inspect it</span></div>
+    <h2>Announcements</h2>
+    <div id="reports"><span class="count">—</span></div>
+    <h2>Keys</h2>
+    <div class="keys desk">
+      Keys follow Steam DF's defaults.<br>
+      <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, arrows or drag: move (<kbd>Shift</kbd> faster)<br>
+      <kbd>e</kbd> / <kbd>c</kbd> (or <kbd>&lt;</kbd> <kbd>&gt;</kbd>, wheel): up / down a level<br>
+      <kbd>[</kbd> <kbd>]</kbd> or <kbd>Ctrl</kbd>+wheel: zoom<br>
+      <kbd>Space</kbd> pause · <kbd>Esc</kbd> back / cancel<br>
+      Click a player to jump to their view<br>
+      Click a creature to inspect it; click an announcement to go there<br>
+      <kbd>m</kbd> dig, then <kbd>u</kbd> channel, <kbd>t</kbd> stairs (again: down, up), <kbd>r</kbd> ramp, <kbd>m</kbd> dig; <kbd>x</kbd> erase<br>
+      In the dig menu, <kbd>p</kbd> / <kbd>P</kbd>: priority up / down (1 is done first)<br>
+      Click two corners, or <kbd>Enter</kbd> at each corner<br>
+      <kbd>b</kbd> build, with DF's menu letters: <kbd>b</kbd><kbd>o</kbd><kbd>f</kbd><kbd>p</kbd> farm plot, <kbd>b</kbd><kbd>p</kbd><kbd>r</kbd> door<br>
+      <kbd>p</kbd> stockpiles · <kbd>z</kbd> zones · <kbd>o</kbd> work orders · <kbd>q</kbd> squads · <kbd>n</kbd> nobles · <kbd>N</kbd> announcements<br>
+      <kbd>X</kbd> remove a building · <kbd>g</kbd> ping · <kbd>Enter</kbd> chat (in Look)<br>
+      Right-click: cancel
+    </div>
+    <div class="keys touch">
+      Drag to pan, pinch to zoom<br>
+      Tap a tile to point at it<br>
+      ▲ ▼ change level<br>
+      Tap a player to jump to their view<br>
+      Tap a creature to inspect it<br>
+      Ping tool: tap to point everyone there<br>
+      Pick a dig tool, then tap two corners<br>
+      Build: pick an item, tap to place<br>
+      Remove: tap what you want gone
+    </div>
+  </div>
+</div>
+<div id="gate"><div>
+  <p>This fortress needs a join token. Ask the host for your link, or paste the token:</p>
+  <input id="tokenInput" placeholder="token" autocomplete="off">
+</div></div>
+<script src="client.js"></script>
+</body>
+</html>

@@ -1,0 +1,177 @@
+QF	Mrsssq	Rollers (W->E)	50	nil	nil	1	31	1	1
+QF	wq	Quern	13	17	nil	1	1	1	1
+QF	trackEW	Track (EW)	34	16	nil	1	1	1	1
+QF	trackE	Track (E)	34	9	nil	1	1	1	1
+QF	~b	Floor Bars	39	nil	nil	1	1	1	1
+QF	Tp	Pressure Plate	23	1	nil	1	1	1	1
+QF	wb	Bowyer's Workshop	13	7	nil	3	3	3	3
+QF	ea	Magma Glass Furnace	5	5	nil	3	3	3	3
+QF	Mrs	Rollers (E->W)	50	nil	nil	1	31	1	1
+QF	trackS	Track (S)	34	8	nil	1	1	1	1
+QF	CSd	Track Stop (Dump North)	23	5	nil	1	1	1	1
+QF	Mh	Horizontal Axle (E/W)	41	nil	nil	1	31	1	1
+QF	ga	Bridge (Raises to West)	19	nil	nil	1	31	1	31
+QF	trackrampNE	Track/Ramp (NE)	34	27	nil	1	1	1	1
+QF	wr	Craftsdwarf's Workshop	13	3	nil	3	3	3	3
+QF	Mrqqqq	Rollers (N->S)	50	nil	nil	1	1	1	31
+QF	CW	Reinforced Wall	34	37	nil	1	1	1	1
+QF	Mrssq	Rollers (S->N)	50	nil	nil	1	1	1	31
+QF	~a	Offering Place	54	nil	nil	1	1	1	1
+QF	Mrqqq	Rollers (N->S)	50	nil	nil	1	1	1	31
+QF	Cx	Up/Down Stair	34	5	nil	1	1	1	1
+QF	Mg	Gear Assembly	40	nil	nil	1	1	1	1
+QF	trackrampNSW	Track/Ramp (NSW)	34	33	nil	1	1	1	1
+QF	Tc	Cage Trap	23	2	nil	1	1	1	1
+QF	ws	Siege Workshop	13	9	nil	5	5	5	5
+QF	Mrsss	Rollers (W->E)	50	nil	nil	1	31	1	1
+QF	trackrampNW	Track/Ramp (NW)	34	28	nil	1	1	1	1
+QF	CF	Fortification	34	0	nil	1	1	1	1
+QF	wk	Clothier's shop	13	13	nil	3	3	3	3
+QF	wd	Dyer's Shop	13	21	nil	3	3	3	3
+QF	~s	Slab	46	nil	nil	1	1	1	1
+QF	trackW	Track (W)	34	10	nil	1	1	1	1
+QF	gs	Bridge (Retracting)	19	nil	nil	1	31	1	31
+QF	trackrampW	Track/Ramp (W)	34	25	nil	1	1	1	1
+QF	CSaa	Track Stop (No Dump)	23	5	nil	1	1	1	1
+QF	Cr	Ramp	34	6	nil	1	1	1	1
+QF	es	Smelter	5	1	nil	3	3	3	3
+QF	ek	Kiln	5	3	nil	3	3	3	3
+QF	Mr	Rollers (N->S)	50	nil	nil	1	1	1	31
+QF	ic	Catapult	22	0	nil	3	3	3	3
+QF	wt	Mechanic's Workshop	13	8	nil	3	3	3	3
+QF	Ts	Stone-Fall Trap	23	3	nil	1	1	1	1
+QF	~c	Bookcase	52	nil	nil	1	1	1	1
+QF	wc	Carpenter's Workshop	13	0	nil	3	3	3	3
+QF	it	Bolt Thrower	22	2	nil	3	3	3	3
+QF	CSdda	Track Stop (Dump South)	23	5	nil	1	1	1	1
+QF	el	Magma Smelter	5	4	nil	3	3	3	3
+QF	Msh	Screw Pump (Pump From West)	33	nil	nil	2	2	1	1
+QF	ib	Ballista	22	1	nil	3	3	3	3
+QF	CSddddaaaa	Track Stop (Dump West)	23	5	nil	1	1	1	1
+QF	Mhs	Horizontal Axle (N/S)	41	nil	nil	1	1	1	31
+QF	Ms	Screw Pump (Pump From North)	33	nil	nil	1	1	2	2
+QF	wu	Butcher's Shop	13	10	nil	3	3	3	3
+QF	g	Bridge (Retracting)	19	nil	nil	1	31	1	31
+QF	wf	Metalsmith's Forge	13	5	nil	3	3	3	3
+QF	trackrampNSEW	Track/Ramp (NSEW)	34	36	nil	1	1	1	1
+QF	CSddaaa	Track Stop (Dump South)	23	5	nil	1	1	1	1
+QF	trackNS	Track (NS)	34	11	nil	1	1	1	1
+QF	trackrampNEW	Track/Ramp (NEW)	34	34	nil	1	1	1	1
+QF	trackrampNSE	Track/Ramp (NSE)	34	32	nil	1	1	1	1
+QF	trackNEW	Track (NEW)	34	19	nil	1	1	1	1
+QF	y	Glass Window	16	nil	nil	1	1	1	1
+QF	CSdaa	Track Stop (Dump North)	23	5	nil	1	1	1	1
+QF	wm	Mason's Workshop	13	2	nil	3	3	3	3
+QF	Tl	Lever	23	0	nil	1	1	1	1
+QF	Cd	Down Stair	34	4	nil	1	1	1	1
+QF	v	Restraint	27	nil	nil	1	1	1	1
+QF	wz	Kitchen	13	19	nil	3	3	3	3
+QF	x	Floodgate	9	nil	nil	1	1	1	1
+QF	trackrampEW	Track/Ramp (EW)	34	31	nil	1	1	1	1
+QF	r	Weapon Rack	11	nil	nil	1	1	1	1
+QF	s	Statue	15	nil	nil	1	1	1	1
+QF	t	Table	2	nil	nil	1	1	1	1
+QF	m	Animal Trap	24	nil	nil	1	1	1	1
+QF	n	Burial Receptacle	3	nil	nil	1	1	1	1
+QF	o	Paved Road	21	nil	nil	1	31	1	31
+QF	p	Farm Plot	4	nil	nil	1	31	1	31
+QF	trackN	Track (N)	34	7	nil	1	1	1	1
+QF	j	Cage	28	nil	nil	1	1	1	1
+QF	k	Kennels	13	18	nil	5	5	5	5
+QF	l	Well	18	nil	nil	1	1	1	1
+QF	trackrampS	Track/Ramp (S)	34	23	nil	1	1	1	1
+QF	wv	Magma Forge	13	6	nil	3	3	3	3
+QF	trackrampE	Track/Ramp (E)	34	24	nil	1	1	1	1
+QF	trackrampNS	Track/Ramp (NS)	34	26	nil	1	1	1	1
+QF	we	Leather Works	13	11	nil	3	3	3	3
+QF	trackrampN	Track/Ramp (N)	34	22	nil	1	1	1	1
+QF	CSddaa	Track Stop (Dump South)	23	5	nil	1	1	1	1
+QF	trackNW	Track (NW)	34	13	nil	1	1	1	1
+QF	Mrsssqq	Rollers (W->E)	50	nil	nil	1	31	1	1
+QF	trackSEW	Track (SEW)	34	20	nil	1	1	1	1
+QF	trackNSW	Track (NSW)	34	18	nil	1	1	1	1
+QF	trackNSE	Track (NSE)	34	17	nil	1	1	1	1
+QF	trackrampSW	Track/Ramp (SW)	34	30	nil	1	1	1	1
+QF	CS	Track Stop (No Dump)	23	5	nil	1	1	1	1
+QF	TS	Upright Spear/Spike	31	nil	nil	1	1	1	1
+QF	wn	Tanner's Shop	13	12	nil	3	3	3	3
+QF	CSdddaaa	Track Stop (Dump East)	23	5	nil	1	1	1	1
+QF	trackNSEW	Track (NSEW)	34	21	nil	1	1	1	1
+QF	CSdaaa	Track Stop (Dump North)	23	5	nil	1	1	1	1
+QF	CSdddaaaa	Track Stop (Dump East)	23	5	nil	1	1	1	1
+QF	Msk	Screw Pump (Pump From East)	33	nil	nil	2	2	1	1
+QF	trackSW	Track (SW)	34	15	nil	1	1	1	1
+QF	wM	Millstone	13	22	nil	1	1	1	1
+QF	CSdddaa	Track Stop (Dump East)	23	5	nil	1	1	1	1
+QF	Mrsqqq	Rollers (E->W)	50	nil	nil	1	31	1	1
+QF	en	Magma Kiln	5	6	nil	3	3	3	3
+QF	trackrampSEW	Track/Ramp (SEW)	34	35	nil	1	1	1	1
+QF	Mws	Water Wheel (E/W)	43	nil	nil	3	3	1	1
+QF	gd	Bridge (Raises to East)	19	nil	nil	1	31	1	31
+QF	trackSE	Track (SE)	34	14	nil	1	1	1	1
+QF	Tw	Weapon Trap	23	4	nil	1	1	1	1
+QF	wh	Fishery	13	14	nil	3	3	3	3
+QF	CSddddaa	Track Stop (Dump West)	23	5	nil	1	1	1	1
+QF	F	Display Furniture	53	nil	nil	1	1	1	1
+QF	G	Floor Grate	37	nil	nil	1	1	1	1
+QF	H	Floor Hatch	35	nil	nil	1	1	1	1
+QF	Mrsssqqq	Rollers (W->E)	50	nil	nil	1	31	1	1
+QF	B	Vertical Bars	38	nil	nil	1	1	1	1
+QF	CSdddda	Track Stop (Dump West)	23	5	nil	1	1	1	1
+QF	D	Trade Depot	6	nil	nil	5	5	5	5
+QF	CSdddd	Track Stop (Dump West)	23	5	nil	1	1	1	1
+QF	CSdaaaa	Track Stop (Dump North)	23	5	nil	1	1	1	1
+QF	wy	Ashery	13	20	nil	3	3	3	3
+QF	CSddd	Track Stop (Dump East)	23	5	nil	1	1	1	1
+QF	wo	Loom	13	16	nil	3	3	3	3
+QF	Msu	Screw Pump (Pump From North)	33	nil	nil	1	1	2	2
+QF	~h	Hive	49	nil	nil	1	1	1	1
+QF	CSdd	Track Stop (Dump South)	23	5	nil	1	1	1	1
+QF	ew	Wood Furnace	5	0	nil	3	3	3	3
+QF	Cf	Floor	34	2	nil	1	1	1	1
+QF	gw	Bridge (Raises to North)	19	nil	nil	1	31	1	31
+QF	trackNE	Track (NE)	34	12	nil	1	1	1	1
+QF	eg	Glass Furnace	5	2	nil	3	3	3	3
+QF	CSa	Track Stop (No Dump)	23	5	nil	1	1	1	1
+QF	CSaaaa	Track Stop (No Dump)	23	5	nil	1	1	1	1
+QF	CSaaa	Track Stop (No Dump)	23	5	nil	1	1	1	1
+QF	CSda	Track Stop (Dump North)	23	5	nil	1	1	1	1
+QF	Cu	Up Stair	34	3	nil	1	1	1	1
+QF	Cw	Wall	34	1	nil	1	1	1	1
+QF	Mv	Vertical Axle	42	nil	nil	1	1	1	1
+QF	wj	Jeweler's Workshop	13	4	nil	3	3	3	3
+QF	Mrsssqqqq	Rollers (W->E)	50	nil	nil	1	31	1	1
+QF	Mrssqq	Rollers (S->N)	50	nil	nil	1	1	1	31
+QF	wS	Soap Maker's Workshop	13	23	0	3	3	3	3
+QF	Mrq	Rollers (N->S)	50	nil	nil	1	1	1	31
+QF	f	Cabinet	14	nil	nil	1	1	1	1
+QF	CSddda	Track Stop (Dump East)	23	5	nil	1	1	1	1
+QF	h	Container	10	nil	nil	1	1	1	1
+QF	a	Armor Stand	12	nil	nil	1	1	1	1
+QF	b	Bed	1	nil	nil	1	1	1	1
+QF	c	Seat	0	nil	nil	1	1	1	1
+QF	d	Door	8	nil	nil	1	1	1	1
+QF	CSddddaaa	Track Stop (Dump West)	23	5	nil	1	1	1	1
+QF	trackrampSE	Track/Ramp (SE)	34	29	nil	1	1	1	1
+QF	ww	Farmer's Workshop	13	1	nil	3	3	3	3
+QF	wl	Still	13	15	nil	3	3	3	3
+QF	Y	Gem Window	17	nil	nil	1	1	1	1
+QF	wp	Screw Press	13	23	1	1	1	1	1
+QF	O	Dirt Road	20	nil	nil	1	31	1	31
+QF	N	Nest Box	48	nil	nil	1	1	1	1
+QF	Mrsq	Rollers (E->W)	50	nil	nil	1	31	1	1
+QF	Mrss	Rollers (S->N)	50	nil	nil	1	1	1	31
+QF	W	Wall Grate	36	nil	nil	1	1	1	1
+QF	gx	Bridge (Raises to South)	19	nil	nil	1	31	1	31
+QF	A	Archery Target	26	nil	nil	1	1	1	1
+QF	R	Traction Bench	45	nil	nil	1	1	1	1
+QF	S	Support	25	nil	nil	1	1	1	1
+QF	Mrssqqq	Rollers (S->N)	50	nil	nil	1	1	1	31
+QF	Mw	Water Wheel (N/S)	43	nil	nil	1	1	3	3
+QF	Mrsqq	Rollers (E->W)	50	nil	nil	1	31	1	1
+QF	Mrssqqqq	Rollers (S->N)	50	nil	nil	1	1	1	31
+QF	Mrsqqqq	Rollers (E->W)	50	nil	nil	1	31	1	1
+QF	I	Instrument	51	nil	nil	1	1	1	1
+QF	Mrqq	Rollers (N->S)	50	nil	nil	1	1	1	31
+QF	Msm	Screw Pump (Pump From South)	33	nil	nil	1	1	2	2
+QF	CSddaaaa	Track Stop (Dump South)	23	5	nil	1	1	1	1
