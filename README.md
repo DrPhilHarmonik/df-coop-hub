@@ -2,6 +2,8 @@
 
 Multiplayer Dwarf Fortress: several people running one fortress together, each from their own browser.
 
+![Two players in the same fortress, with each other's cursors and chat](docs/screenshots/map.png)
+
 Dwarf Fortress has no networking, and dfplex, the old multiplayer plugin, stopped working when the Steam release (v50) rewrote the interface. df-coop doesn't try to share DF's own screen. DF runs on one machine, the host. A hub on that machine reads the fortress through DFHack and sends it to every player. Players act through their own client, and the hub carries out their actions with DFHack. The host is the only authority, and every action is logged with the player who made it.
 
 ```
@@ -11,6 +13,23 @@ Dwarf Fortress has no networking, and dfplex, the old multiplayer plugin, stoppe
 ```
 
 DFHack's RPC port stays bound to localhost. Players only connect to the hub.
+
+## Screenshots
+
+Work orders, squads and nobles, all managed from the side panel:
+
+<p>
+  <img src="docs/screenshots/orders.png" width="32%" alt="Work orders panel with one order open, showing its conditions, amount and repeat">
+  <img src="docs/screenshots/squads.png" width="32%" alt="Squads panel with one squad open, listing its members">
+  <img src="docs/screenshots/nobles.png" width="32%" alt="Nobles panel listing posts and holders, with vacant posts marked">
+</p>
+
+It also works on a phone, and text glyphs are available if you prefer the classic look:
+
+<p>
+  <img src="docs/screenshots/phone.png" width="28%" alt="The game on a phone with Steam graphics">
+  <img src="docs/screenshots/map-text.png" width="68%" alt="The same fortress drawn with text glyphs">
+</p>
 
 ## Status
 
@@ -153,4 +172,4 @@ pytest df-coop
 
 ## License
 
-MIT, see `LICENSE`. `proto/` holds DFHack's protobuf definitions, and `tools/quickfort_build.tsv` is derived from DFHack's quickfort; DFHack's license is in `proto/DFHACK-LICENSE.rst`. Not affiliated with Bay 12 Games or the DFHack project. No game files are included: graphics are read from your own installed copy.
+MIT, see `LICENSE`. `proto/` holds DFHack's protobuf definitions, and `tools/quickfort_build.tsv` is derived from DFHack's quickfort; DFHack's license is in `proto/DFHACK-LICENSE.rst`. Not affiliated with Bay 12 Games or the DFHack project. No game files are included: graphics are read from your own installed copy. Screenshots show the Steam edition's graphics, which belong to their creators (Bay 12 Games and Kitfox Games).
