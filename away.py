@@ -48,7 +48,8 @@ def summarize_actions(entries, since: float, me: str) -> list[str]:
     """One line per other player who did anything since `since`."""
     per: dict[str, dict] = defaultdict(lambda: {"dug": 0, "cleared": 0, "built": Counter(), "removed": Counter(),
                                                 "ordered": Counter(), "cancelled": 0, "changed": set(),
-                                                "squads": set(), "posts": set()})
+                                                "squads": set(), "posts": set(), "places": set(), "details": set(),
+                                                "workshops": set(), "farms": set()})
     for e in entries:
         who = e.get("player")
         if not who or who == me or e.get("t", 0) <= since:
@@ -70,12 +71,20 @@ def summarize_actions(entries, since: float, me: str) -> list[str]:
             p["ordered"][o.label if o else e.get("order", "?")] += e.get("amount", 1)
         elif kind == "cancel_order":
             p["cancelled"] += 1
-        elif kind in ("edit_order", "move_order"):
+        elif kind in ("edit_order", "move_order", "order_conditions"):
             p["changed"].add(e.get("order_id"))
-        elif kind in ("squad_add", "squad_remove", "rename_squad"):
+        elif kind in ("squad_add", "squad_remove", "rename_squad", "squad_station", "squad_kill", "squad_clear"):
             p["squads"].add(e.get("squad"))
+        elif kind in ("work_detail_member", "work_detail_mode"):
+            p["details"].add(e.get("detail"))
         elif kind in ("appoint_noble", "vacate_noble"):
             p["posts"].add(e.get("title"))
+        elif kind in ("stockpile_category", "stockpile_containers", "rename_place", "zone_owner", "zone_active"):
+            p["places"].add(e.get("place"))
+        elif kind in ("workshop_job", "workshop_worker"):
+            p["workshops"].add(e.get("place"))
+        elif kind in ("farm_crop", "farm_fertilize"):
+            p["farms"].add(e.get("place"))
     lines = []
     for who in sorted(per):
         p = per[who]
@@ -96,8 +105,19 @@ def summarize_actions(entries, since: float, me: str) -> list[str]:
             parts.append(f"changed {len(p['changed'])} order{'s' if len(p['changed']) > 1 else ''}")
         if p["squads"]:
             parts.append(f"changed {len(p['squads'])} squad{'s' if len(p['squads']) > 1 else ''}")
+        if p["details"]:
+            parts.append("changed the " + ", ".join(sorted(str(d) for d in p["details"])) + " work details")
         if p["posts"]:
             parts.append("changed the " + ", ".join(sorted(str(t) for t in p["posts"])))
+        if p["places"]:
+            n = len(p["places"])
+            parts.append(f"changed {n} stockpile{'s' if n > 1 else ''} or zone{'s' if n > 1 else ''}")
+        if p["workshops"]:
+            n = len(p["workshops"])
+            parts.append(f"changed tasks or workers at {n} workshop{'s' if n > 1 else ''}")
+        if p["farms"]:
+            n = len(p["farms"])
+            parts.append(f"changed {n} farm plot{'s' if n > 1 else ''}")
         if parts:
             lines.append(f"{who} " + "; ".join(parts))
     return lines

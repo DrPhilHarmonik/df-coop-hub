@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from catalog import BY_ID, ITEMS, MAX_AREA_SIDE, game_date, summarize
+from catalog import BY_ID, ITEMS, MAX_AREA_SIDE, STOCK_GROUPS, game_date, stock_rows, summarize
 
 KEY = re.compile(r"^~?[A-Za-z]{1,10}$")   # what lua/rpc/coop.lua accepts, minus the extent
 
@@ -130,3 +130,24 @@ def test_humanize_and_stress_labels():
     assert humanize("PrayOrMeditate") == "Pray or meditate"
     assert humanize("Wander") == "Wander"
     assert STRESS_LABELS[0] == "Miserable" and STRESS_LABELS[6] == "Ecstatic"
+
+
+def test_stock_rows_are_named_grouped_and_biggest_first():
+    rows = stock_rows([
+        {"type": "BAR", "what": "", "material": "silver", "count": 3},
+        {"type": "BAR", "what": "", "material": "coal", "count": 9},
+        {"type": "BAR", "what": "", "material": "silver", "count": 2},      # same name: added up
+        {"type": "PLANT", "what": "", "material": "quarry bush plant", "count": 4},
+        {"type": "SEEDS", "what": "", "material": "", "count": 1},         # no material: the label
+        {"type": "TOOL", "what": "jugs", "material": "granite", "count": 7},
+        {"type": "EGG", "what": "", "material": "hen", "count": 5},
+        {"type": "NEW_THING", "what": "", "material": "iron", "count": 1},
+    ])
+    assert [g["name"] for g in rows] == ["Raw materials", "Food and drink", "Tools and containers", "Other"]
+    assert rows[0] == {"name": "Raw materials", "total": 14,
+                       "rows": [{"name": "coal bars", "count": 9}, {"name": "silver bars", "count": 5}]}
+    assert rows[1]["rows"] == [{"name": "hen eggs", "count": 5}, {"name": "quarry bush plant", "count": 4},
+                               {"name": "seeds", "count": 1}]
+    assert rows[2]["rows"] == [{"name": "granite jugs", "count": 7}]
+    assert rows[3]["rows"] == [{"name": "iron new thing", "count": 1}]
+    assert STOCK_GROUPS[-1] == "Other"

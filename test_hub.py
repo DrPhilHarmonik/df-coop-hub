@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import tempfile
 from pathlib import Path
 
@@ -20,7 +21,8 @@ from websockets.exceptions import InvalidStatus
 from dfhack_rpc import DFHackRPCError, rfr
 from actions import Owners
 from hub import Hub, Session, add_player, load_players
-from mapstate import FLAGS1_HIDDEN_IN_AMBUSH
+from mapstate import FLAGS1_HIDDEN_IN_AMBUSH, FLAGS2_KILLED, UNIT_GONE_FLAGS1
+from rpcstats import RpcStats
 
 N = 256
 TOKENS = {"tok-a": "Alice", "tok-b": "Bob"}
@@ -56,7 +58,17 @@ class FakeDF:
         self.lua_calls = []
         self.year, self.tick = 23, 147722
         self.apply_stats = None  # override what the fake quickfort reports
-        self.lua_version = "10"
+        self.lua_version = "19"
+        self.detail_data = {"details": [{"i": 0, "name": "Miners", "mode": "OnlySelectedDoesThis", "no_everybody": True,
+                                         "labors": ["MINE", "HAUL_STONE"], "members": [7]}],
+                            "people": [{"id": 7, "name": "Urist"}, {"id": 8, "name": "Bomrek"}]}
+        self.detail_reply = {"ok": True}
+        self.citizen_list = [
+            {"id": 7, "name": "Urist, miner", "profession": "Miner", "job": "Dig", "stress": 1, "squad": "The Axes",
+             "x": 3, "y": 4, "z": 5},
+            {"id": 8, "name": "Bomrek", "profession": "Peasant", "job": "", "stress": -1, "squad": ""},
+        ]
+        self.condition_replies = {}
         self.report_list = [
             {"id": 10, "text": "A caravan from Ukosh has arrived.", "type": "CARAVAN_ARRIVAL", "year": 23, "time": 0,
              "x": 4, "y": 4, "z": 5, "hidden": False, "color": 11},
@@ -73,6 +85,19 @@ class FakeDF:
         self.squad_list = [{"id": 2, "name": "The Axes", "alias": "", "slots": 3, "routine": "Off duty", "orders": [],
                             "members": [{"slot": 0, "leader": True, "unit": 1, "name": "Urist, captain", "away": False}]}]
         self.free_units = [{"id": 8, "name": "Bomrek, miner"}]
+        self.places = {300: {"found": True, "kind": "stockpile", "id": 300, "number": 1, "name": "", "tiles": 12, "z": 5,
+                             "categories": ["wood"], "barrels": 0, "bins": 0, "wheelbarrows": 0},
+                       58: {"found": True, "kind": "zone", "id": 58, "number": 1, "name": "", "tiles": 9, "z": 5,
+                            "zone": "Bedroom", "active": True, "ownable": True, "owner": ""},
+                       400: {"found": True, "kind": "workshop", "id": 400, "name": "Stoneworker's Workshop",
+                             "custom": "", "workshop": "Masons", "built": True, "z": 5, "tiles": 9,
+                             "jobs": [{"id": 11, "name": "Make granite blocks", "order": 8, "worker": "",
+                                       "suspended": False, "repeat": False, "now": False, "building": False}],
+                             "workers": [], "general_orders": 5, "orders_here": 0},
+                       500: {"found": True, "kind": "farm", "id": 500, "name": "", "tiles": 16, "z": 5,
+                             "underground": True, "fertilize": False, "season": 1,
+                             "crops": [{"id": 173, "name": "plump helmets"}] * 4,
+                             "options": [[{"id": 173, "name": "plump helmets", "seeds": 58}]] * 4}}
         self.posts = [{"id": 16, "code": "MANAGER", "title": "manager", "rank": 160, "holder": "Urist, manager",
                        "locked": "", "duties": ["MANAGE_PRODUCTION"], "needs": {"office": 1}},
                       {"id": 17, "code": "MAYOR", "title": "lord", "rank": 60, "holder": "Zon, lady",
@@ -144,6 +169,50 @@ class FakeDF:
             return [json.dumps({"set": len(changed)})]
         if function == "orders":
             return [json.dumps(self.manager_orders)]
+        if function == "work_details":
+            return [json.dumps(self.detail_data)]
+        if function in ("work_detail_member", "work_detail_mode"):
+            return [json.dumps(self.detail_reply)]
+        if function == "units":
+            # As coop.lua: the levels asked for, nothing gone, dead or in ambush, nothing on a
+            # hidden tile; gear and baby only when asked.
+            if self.fail:
+                raise DFHackRPCError("connection closed by DFHack")
+            levels = {int(z) for z in args[0].split(",")}
+            rows = []
+            for u in self.unit_list:
+                if u.pos_z not in levels or u.flags1 & UNIT_GONE_FLAGS1 or u.flags2 & FLAGS2_KILLED:
+                    continue
+                if u.pos_z == 5 and (u.pos_x, u.pos_y) in ((0, 0), (31, 15)):
+                    continue
+                row = {"i": u.id, "x": u.pos_x, "y": u.pos_y, "z": u.pos_z, "n": u.name,
+                       "c": (f"#{u.profession_color.red & 255:02x}{u.profession_color.green & 255:02x}"
+                             f"{u.profession_color.blue & 255:02x}" if u.HasField("profession_color") else "#ffffff"),
+                       "race": u.race.mat_type, "caste": u.race.mat_index}
+                if args[1] == "1":
+                    row["gear"] = [[e.item.type.mat_type, e.item.type.mat_index] for e in u.inventory
+                                   if e.mode in (rfr.Worn, rfr.Weapon)]
+                    row["baby"] = u.HasField("age") and u.age == 0
+                rows.append(row)
+            return [json.dumps(rows)]
+        if function == "stocks":
+            return [json.dumps({"items": [{"type": "BAR", "what": "", "material": "silver", "count": 9},
+                                          {"type": "WEAPON", "what": "short swords", "material": "iron", "count": 2},
+                                          {"type": "DRINK", "what": "", "material": "dwarven ale", "count": 40}]})]
+        if function == "citizens":
+            if self.citizen_list is None:
+                raise DFHackRPCError("boom")
+            return [json.dumps(self.citizen_list)]
+        if function in ("farm_crop", "farm_fertilize"):
+            if int(args[0]) not in self.places:
+                return [json.dumps({"ok": False, "why": "that farm plot is gone"})]
+            return [json.dumps({"ok": True})]
+        if function in ("workshop_job", "workshop_worker"):
+            if int(args[0]) not in self.places:
+                return [json.dumps({"ok": False, "why": "that workshop is gone"})]
+            if function == "workshop_worker":
+                return [json.dumps({"ok": True, "name": "Bomrek, miner" if args[1] else ""})]
+            return [json.dumps({"ok": True})]
         if function == "order":
             job, reaction, material, amount, *freq = args
             if not self.workorder_ok:
@@ -152,6 +221,28 @@ class FakeDF:
                                         "left": int(amount), "total": int(amount), "material": material,
                                         "freq": freq[0] if freq else "OneTime"})
             return [json.dumps({"ok": True, "output": ""})]
+        if function == "place_info":
+            return [json.dumps(self.places.get(int(args[0]), {"found": False}))]
+        if function == "zone_candidates":
+            return [json.dumps([{"id": 8, "name": "Bomrek, miner"}])]
+        if function in ("stockpile_category", "stockpile_containers", "rename_place", "zone_owner", "zone_active"):
+            place = self.places.get(int(args[0]))
+            if not place:
+                return [json.dumps({"ok": False, "why": "that place is gone"})]
+            if function == "zone_owner":
+                place["owner"] = "Bomrek, miner" if args[1] else ""
+                return [json.dumps({"ok": True, "name": place["owner"]})]
+            if function == "zone_active":
+                place["active"] = args[1] == "1"
+            elif function == "rename_place":
+                place["name"] = args[1]
+            elif function == "stockpile_containers":
+                place["barrels"], place["bins"], place["wheelbarrows"] = (int(a) for a in args[1:4])
+            else:
+                cats = set(place["categories"])
+                (cats.add if args[2] == "1" else cats.discard)(args[1])
+                place["categories"] = sorted(cats)
+            return [json.dumps({"ok": True})]
         if function == "nobles":
             return [json.dumps(self.posts)]
         if function == "noble_candidates":
@@ -167,6 +258,21 @@ class FakeDF:
                 return [json.dumps({"ok": True, "name": name})]
             post["holder"] = "Bomrek, miner"
             return [json.dumps({"ok": True, "name": "Bomrek, miner"})]
+        if function == "squad_targets":
+            return [json.dumps([{"id": 1, "name": "Goblin", "x": 4, "y": 4, "z": 5},
+                                {"id": 999, "name": "Ambusher", "x": 0, "y": 0, "z": 5}])]
+        if function == "squad_station":
+            self.squad_list[0]["station"] = dict(zip("xyz", (int(a) for a in args[1:4])))
+            self.squad_list[0]["kill"] = 0
+            return [json.dumps({"ok": True})]
+        if function == "squad_kill":
+            self.squad_list[0].pop("station", None)
+            self.squad_list[0]["kill"] = len(args[1].split(","))
+            return [json.dumps({"ok": True, "count": self.squad_list[0]["kill"]})]
+        if function == "squad_clear":
+            self.squad_list[0].pop("station", None)
+            self.squad_list[0]["kill"] = 0
+            return [json.dumps({"ok": True})]
         if function == "squads":
             return [json.dumps(self.squad_list)]
         if function == "squad_candidates":
@@ -195,15 +301,19 @@ class FakeDF:
             self.squad_list[0]["name"] = args[1] or "The Axes"
             return [json.dumps({"ok": True, "name": self.squad_list[0]["name"]})]
         if function == "set_order":
-            oid, amount, freq = args
+            oid, amount, freq, *limit = args
             for o in self.manager_orders:
                 if o["id"] == int(oid):
                     if amount:
                         o["left"] = o["total"] = int(amount)
                     if freq:
                         o["freq"] = freq
+                    if limit:
+                        o["max_workshops"] = int(limit[0])
                     return [json.dumps({"ok": True})]
             return [json.dumps({"ok": False, "missing": True})]
+        if function in ("edit_condition", "remove_condition", "add_item_condition", "add_order_condition"):
+            return [json.dumps(self.condition_replies.get(function, {"ok": True}))]
         if function == "move_order":
             oid, to = args
             ids = [o["id"] for o in self.manager_orders]
@@ -491,6 +601,351 @@ def test_batched_block_bounds_and_reply_budget(polling_hub, levels, ranges):
     run(hub.poll_blocks())
     assert df.block_calls == [(0, 2, 0, 2, lo, hi, 4 * (hi - lo) + 1, True) for lo, hi in ranges]
     assert hub.fetched_z == {z for lo, hi in ranges for z in range(lo, hi)}
+
+
+def test_time_holding_df_is_measured_and_logged(polling_hub, caplog):
+    hub, df, _ = polling_hub
+    hub.rpc_stats = RpcStats(every=0)
+    hub.poll_interval = 0.01
+
+    async def briefly():
+        stop = asyncio.Event()
+        task = asyncio.create_task(hub.run_polling(stop))
+        await asyncio.sleep(0.1)
+        stop.set()
+        await task
+
+    with caplog.at_level(logging.INFO, logger="df-coop"):
+        run(briefly())
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("DF calls took")]
+    assert lines
+    assert any("blocks " in line for line in lines)
+    assert any("lua:date " in line for line in lines)
+
+
+def count_calls(df, name):
+    """Calls to one of the fake's RPCs; "units" counts coop.lua's units read, which
+    replaced RemoteFortressReader's from module v19."""
+    calls = []
+    if name == "units":
+        original = df.run_lua
+
+        def counted_lua(module, function, *args):
+            if function == "units":
+                calls.append(args)
+            return original(module, function, *args)
+
+        df.run_lua = counted_lua
+        return calls
+    original = getattr(df, name)
+
+    def counted(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    setattr(df, name, counted)
+    return calls
+
+
+def poll_for(hub, seconds, during=None):
+    async def go():
+        stop = asyncio.Event()
+        task = asyncio.create_task(hub.run_polling(stop))
+        await asyncio.sleep(seconds)
+        if during:
+            during()
+            await asyncio.sleep(seconds)
+        stop.set()
+        await task
+    run(go())
+
+
+def test_the_map_is_read_on_its_own_slower_timer_and_units_on_theirs(polling_hub):
+    hub, df, _ = polling_hub
+    blocks, units = count_calls(df, "blocks"), count_calls(df, "units")
+    hub.poll_interval, hub.unit_interval = 10.0, 0.05
+    poll_for(hub, 0.3)
+    assert len(blocks) == 2     # one pass, over this fixture's two ranges of levels
+    assert len(units) >= 4
+
+
+def test_pause_state_is_read_every_other_unit_poll(polling_hub):
+    hub, df, _ = polling_hub
+    units, paused = count_calls(df, "units"), count_calls(df, "paused")
+    hub.poll_interval, hub.unit_interval = 10.0, 0.1
+    poll_for(hub, 0.65)
+    assert len(units) >= 4
+    assert len(paused) <= len(units) / 2 + 1
+
+
+def test_a_map_read_can_be_asked_for_but_not_too_often(polling_hub):
+    hub, df, _ = polling_hub
+    blocks = count_calls(df, "blocks")
+    hub.poll_interval, hub.unit_interval = 10.0, 10.0
+    seen = []
+
+    def ask():
+        seen.append(len(blocks))
+        hub._poll_blocks_soon()
+        hub._poll_blocks_soon()
+
+    poll_for(hub, 0.4, during=ask)
+    assert seen == [2]
+    assert len(blocks) == 4
+
+
+def test_playing_or_looking_elsewhere_reads_the_map_soon():
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await asyncio.sleep(0.1)
+                hub.poll_interval = 100.0
+                await asyncio.sleep(0.1)
+                blocks = count_calls(df, "blocks")
+                await asyncio.sleep(0.5)
+                assert blocks == []
+                await ws.send(json.dumps({"type": "dig", "kind": "dig", "x1": 3, "y1": 3, "x2": 3, "y2": 3, "z": 5}))
+                await asyncio.sleep(0.5)
+                assert blocks
+                blocks.clear()
+                await asyncio.sleep(0.5)
+                assert blocks == []
+                await ws.send(json.dumps({"type": "view", "z": 20, "cx": 3, "cy": 3}))
+                await asyncio.sleep(0.5)
+                assert blocks
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_polling_slows_only_when_every_tab_is_hidden(polling_hub):
+    hub, df, _ = polling_hub
+    first, second = hub.sessions.values()
+    assert hub._slowdown() == 1
+    hub._on_visibility(first, True)
+    assert hub._slowdown() == 1
+    hub._on_visibility(second, True)
+    assert hub._slowdown() == 4
+
+    units = count_calls(df, "units")
+    hub.poll_interval, hub.unit_interval = 0.05, 0.05
+    poll_for(hub, 0.5)
+    slow = len(units)
+    units.clear()
+    hub._on_visibility(first, False)
+    assert hub._slowdown() == 1
+    assert hub._blocks_due == hub._units_due == hub._paused_due == 0.0     # catches up at once
+    poll_for(hub, 0.5)
+    assert len(units) > slow * 2
+
+
+def test_malformed_visibility_is_ignored():
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps({"type": "visibility", "hidden": "yes"}))
+                await ws.send(json.dumps({"type": "visibility"}))
+                await ws.send(json.dumps({"type": "visibility", "hidden": True}))
+                await asyncio.sleep(0.1)
+                assert hub._slowdown() == 4
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_citizens_are_readable_and_any_role_can_ask():
+    async def go():
+        hub, df, stop, task, port = await start_with_roles({"Alice": "visitor"})
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                assert (await recv_until(ws, "hello"))["can_citizens"]
+                await ws.send(json.dumps({"type": "citizens"}))
+                r = await recv_until(ws, "citizens")
+                assert r["ok"]
+                assert r["citizens"] == [
+                    {"id": 7, "name": "Urist, miner", "profession": "Miner", "job": "Dig", "stress": 1,
+                     "squad": "The Axes", "mood": "Very unhappy", "x": 3, "y": 4, "z": 5},
+                    {"id": 8, "name": "Bomrek", "profession": "Peasant", "job": "", "stress": -1,
+                     "squad": "", "mood": ""},
+                ]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_players_share_one_read_of_the_citizens():
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as a, \
+                       connect(f"ws://127.0.0.1:{port}/ws?token=tok-b") as b:
+                await recv_until(a, "hello")
+                await recv_until(b, "hello")
+                for ws in (a, b, a):
+                    await ws.send(json.dumps({"type": "citizens"}))
+                    assert (await recv_until(ws, "citizens"))["ok"]
+                assert len([c for c in df.lua_calls if c[1] == "citizens"]) == 1
+                hub._citizens_read = float("-inf")
+                await a.send(json.dumps({"type": "citizens"}))
+                await recv_until(a, "citizens")
+                assert len([c for c in df.lua_calls if c[1] == "citizens"]) == 2
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_citizens_need_the_new_module_and_survive_a_failed_read():
+    async def go():
+        df = FakeDF()
+        df.lua_version = "13"
+        hub, df, stop, task, port = await start(df)
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                assert not (await recv_until(ws, "hello"))["can_citizens"]
+                await ws.send(json.dumps({"type": "citizens"}))
+                assert "install-lua" in (await recv_until(ws, "citizens"))["error"]
+                assert not [c for c in df.lua_calls if c[1] == "citizens"]
+        finally:
+            await finish(stop, task)
+        df = FakeDF()
+        df.citizen_list = None
+        hub, df, stop, task, port = await start(df)
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps({"type": "citizens"}))
+                r = await recv_until(ws, "citizens")
+                assert not r["ok"] and "refused" in r["error"]
+                assert hub.df_online
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_work_details_are_readable_by_anyone_and_shared():
+    async def go():
+        hub, df, stop, task, port = await start_with_roles({"Alice": "visitor"})
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                hello = await recv_until(ws, "hello")
+                assert hello["can_work_details"]
+                assert {"id": "NobodyDoesThis", "label": "Nobody"} in hello["work_detail_modes"]
+                for _ in range(2):
+                    await ws.send(json.dumps({"type": "work_details"}))
+                    r = await recv_until(ws, "work_details")
+                    assert r["ok"] and r["details"][0]["labors"] == ["Mine", "Haul stone"]
+                    assert r["people"][1]["name"] == "Bomrek"
+                assert len([c for c in df.lua_calls if c[1] == "work_details"]) == 1
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_changing_a_work_detail_reaches_df_is_logged_and_refreshes():
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps({"type": "work_details"}))
+                await recv_until(ws, "work_details")
+                await ws.send(json.dumps({"type": "work_detail_member", "detail": 0, "name": "Miners", "unit": 8, "on": True}))
+                assert (await recv_until(ws, "work_detail_result"))["ok"]
+                assert lua_call(df, "work_detail_member") == ("rpc.coop", "work_detail_member", "0", "Miners", "8", "1")
+                await ws.send(json.dumps({"type": "work_detail_mode", "detail": 0, "name": "Miners", "mode": "NobodyDoesThis"}))
+                assert (await recv_until(ws, "work_detail_result"))["ok"]
+                assert lua_call(df, "work_detail_mode") == ("rpc.coop", "work_detail_mode", "0", "Miners", "NobodyDoesThis")
+                logged = [e for e in hub.action_log.entries() if e["type"].startswith("work_detail")]
+                assert [(e["player"], e["detail"]) for e in logged] == [("Alice", "Miners")] * 2
+                assert logged[0]["unit"] == 8 and logged[0]["on"] is True and logged[1]["mode"] == "NobodyDoesThis"
+                await ws.send(json.dumps({"type": "work_details"}))           # the change isn't hidden by the cache
+                await recv_until(ws, "work_details")
+                assert len([c for c in df.lua_calls if c[1] == "work_details"]) == 2
+                df.detail_reply = {"ok": False, "why": "they already use a tool"}
+                await ws.send(json.dumps({"type": "work_detail_member", "detail": 0, "name": "Miners", "unit": 8, "on": True}))
+                r = await recv_until(ws, "work_detail_result")
+                assert not r["ok"] and "tool" in r["error"]
+                assert len([e for e in hub.action_log.entries() if e["type"].startswith("work_detail")]) == 2
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+@pytest.mark.parametrize("msg,error", [
+    ({"type": "work_detail_member", "detail": "0", "name": "Miners", "unit": 8, "on": True}, "malformed work detail"),
+    ({"type": "work_detail_member", "detail": 0, "unit": 8, "on": True}, "malformed work detail"),
+    ({"type": "work_detail_member", "detail": 0, "name": "x" * 101, "unit": 8, "on": True}, "malformed work detail"),
+    ({"type": "work_detail_member", "detail": 0, "name": "Miners", "unit": "8", "on": True}, "malformed change"),
+    ({"type": "work_detail_member", "detail": 0, "name": "Miners", "unit": 8, "on": 1}, "malformed change"),
+    ({"type": "work_detail_mode", "detail": 0, "name": "Miners", "mode": "Default"}, "isn't a setting"),
+    ({"type": "work_detail_mode", "detail": 0, "name": "Miners", "mode": ["NobodyDoesThis"]}, "isn't a setting"),
+])
+def test_bad_work_detail_changes_never_reach_df(msg, error):
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps(msg))
+                r = await recv_until(ws, "work_detail_result")
+                assert not r["ok"] and error in r["error"]
+                assert not [c for c in df.lua_calls if c[1].startswith("work_detail_")]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+@pytest.mark.parametrize("role,allowed", [("overseer", True), ("quartermaster", True), ("builder", False),
+                                          ("miner", False), ("commander", False), ("visitor", False)])
+def test_work_details_need_the_labor_permission(role, allowed):
+    async def go():
+        hub, df, stop, task, port = await start_with_roles({"Alice": role})
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps({"type": "work_detail_mode", "detail": 0, "name": "Miners", "mode": "NobodyDoesThis"}))
+                if allowed:
+                    assert (await recv_until(ws, "work_detail_result"))["ok"]
+                else:
+                    assert (await recv_until(ws, "denied"))["action"] == "work_detail_mode"
+                    assert not [c for c in df.lua_calls if c[1] == "work_detail_mode"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_work_details_need_the_new_module():
+    async def go():
+        df = FakeDF()
+        df.lua_version = "14"
+        hub, df, stop, task, port = await start(df)
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                assert not (await recv_until(ws, "hello"))["can_work_details"]
+                await ws.send(json.dumps({"type": "work_details"}))
+                assert "install-lua" in (await recv_until(ws, "work_details"))["error"]
+                await ws.send(json.dumps({"type": "work_detail_mode", "detail": 0, "name": "Miners", "mode": "NobodyDoesThis"}))
+                assert "install-lua" in (await recv_until(ws, "work_detail_result"))["error"]
+                assert not [c for c in df.lua_calls if c[1].startswith("work_detail")]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_a_failed_df_call_is_still_timed(polling_hub):
+    hub, df, _ = polling_hub
+
+    def broken():
+        raise DFHackRPCError("gone")
+
+    hub.rpc_stats = RpcStats()
+    with pytest.raises(DFHackRPCError):
+        run(hub._df(broken))
+    assert hub.rpc_stats.calls["broken"][0] == 1
 
 
 def test_buildings_broadcast_once_after_all_polled_ranges(polling_hub):
@@ -1145,8 +1600,10 @@ def test_join_shows_the_queue_with_readable_names():
                 assert hello["can_order"]
                 assert hello["orders"] == [{"id": 51, "label": "Brew drink (plants)", "material": "",
                                             "left": 4, "total": 10, "freq": "Daily",
-                                            "status": "waiting", "conds": []}]
+                                            "status": "waiting", "max_workshops": 0,
+                                            "conds": [], "cond_info": []}]
                 assert hello["can_edit_orders"]
+                assert hello["can_edit_conditions"]
                 assert {"id": "Daily", "label": "Daily"} in hello["order_catalog"]["freqs"]
                 assert {"o_bed", "o_brew"} <= {o["id"] for o in hello["order_catalog"]["orders"]}
         finally:
@@ -1219,6 +1676,15 @@ def test_df_refusing_an_order_is_reported_not_swallowed():
         finally:
             await finish(stop, task)
     run(go())
+
+
+async def wait_for_visible(hub, unit):
+    """Until the units poll has shown this unit to the connected player."""
+    for _ in range(200):
+        if any(unit in s.visible_units for s in hub.sessions.values()):
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"unit {unit} never became visible")
 
 
 def lua_call(df, function):
@@ -1305,6 +1771,138 @@ def test_bad_order_edits_never_reach_df(msg, error):
     run(go())
 
 
+def test_workshop_limit_reaches_df_and_needs_the_new_module():
+    async def go():
+        hub, df, stop, task, port = await start(two_orders())
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps({"type": "edit_order", "order": 52, "max_workshops": 2}))
+                assert (await recv_until(ws, "edit_result"))["ok"]
+                assert lua_call(df, "set_order") == ("rpc.coop", "set_order", "52", "", "", "2")
+                m = await recv_until(ws, "orders", lambda m: m["orders"][1]["max_workshops"] == 2)
+                assert m["orders"][1]["max_workshops"] == 2
+                for bad in (-1, 100, True, "2"):
+                    await ws.send(json.dumps({"type": "edit_order", "order": 52, "max_workshops": bad}))
+                    assert "workshop limit" in (await recv_until(ws, "edit_result"))["error"]
+                df.lua_version = "12"
+                hub.lua_version = 12
+                await ws.send(json.dumps({"type": "edit_order", "order": 52, "max_workshops": 1}))
+                assert not (await recv_until(ws, "edit_result"))["ok"]
+                await ws.send(json.dumps({"type": "edit_order", "order": 52, "amount": 3}))   # the rest still works
+                assert (await recv_until(ws, "edit_result"))["ok"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_conditions_reach_df_and_everyone_can_edit_them():
+    async def go():
+        df = two_orders()
+        df.manager_orders[1].update(conds=[{"cmp": "AtLeast", "val": 10, "item": "BAR", "flags": [], "mat": "iron",
+                                            "key": "i:7"},
+                                           {"after": 53, "when": "Completed", "key": "o:53:1"}])
+        hub, df, stop, task, port = await start(df)
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                orders = (await recv_until(ws, "hello"))["orders"]
+                assert orders[1]["cond_info"] == [{"key": "i:7", "cmp": "AtLeast", "val": 10, "what": "iron bar"},
+                                                  {"key": "o:53:1"}]
+                for msg, call in [
+                    ({"type": "edit_condition", "order": 52, "key": "i:7", "cmp": "LessThan", "val": 3},
+                     ("rpc.coop", "edit_condition", "52", "i:7", "LessThan", "3")),
+                    ({"type": "remove_condition", "order": 52, "key": "o:53:1"},
+                     ("rpc.coop", "remove_condition", "52", "o:53:1")),
+                    ({"type": "add_condition", "order": 52, "item": "BED", "cmp": "AtLeast", "val": 5},
+                     ("rpc.coop", "add_item_condition", "52", "BED", "AtLeast", "5")),
+                    ({"type": "add_condition", "order": 52, "after": 53, "when": "Activated"},
+                     ("rpc.coop", "add_order_condition", "52", "53", "Activated")),
+                ]:
+                    await ws.send(json.dumps(msg))
+                    r = await recv_until(ws, "condition_result")
+                    assert r["ok"] and r["label"] == "Beds"
+                    assert lua_call(df, call[1]) == call
+                logged = [e for e in hub.action_log.entries() if e["type"] == "order_conditions"]
+                assert [e["change"] for e in logged] == ["edit_condition", "remove_condition",
+                                                         "add_condition", "add_condition"]
+                assert {e["order_id"] for e in logged} == {52}
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+@pytest.mark.parametrize("reply,error", [
+    ({"ok": False, "missing": True}, "already gone"),
+    ({"ok": False, "stale": True}, "has changed"),
+    ({"ok": False, "duplicate": True}, "already has"),
+    ({"ok": False, "loop": True}, "wait for each other"),
+    ({"ok": False}, "refused"),
+])
+def test_df_refusing_a_condition_says_why_and_isnt_logged(reply, error):
+    async def go():
+        df = two_orders()
+        df.condition_replies["add_order_condition"] = reply
+        hub, df, stop, task, port = await start(df)
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps({"type": "add_condition", "order": 52, "after": 53, "when": "Completed"}))
+                r = await recv_until(ws, "condition_result")
+                assert not r["ok"] and error in r["error"]
+                assert not [e for e in hub.action_log.entries() if e["type"] == "order_conditions"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+@pytest.mark.parametrize("msg,error", [
+    ({"type": "edit_condition", "order": "52", "key": "i:1", "cmp": "AtLeast", "val": 1}, "malformed order"),
+    ({"type": "edit_condition", "order": 52, "cmp": "AtLeast", "val": 1}, "malformed condition"),
+    ({"type": "edit_condition", "order": 52, "key": "", "cmp": "AtLeast", "val": 1}, "malformed condition"),
+    ({"type": "edit_condition", "order": 52, "key": "x" * 201, "cmp": "AtLeast", "val": 1}, "malformed condition"),
+    ({"type": "edit_condition", "order": 52, "key": "i:1", "cmp": "NONE", "val": 1}, "comparison"),
+    ({"type": "edit_condition", "order": 52, "key": "i:1", "cmp": "AtLeast", "val": -1}, "0 to 999999"),
+    ({"type": "edit_condition", "order": 52, "key": "i:1", "cmp": "AtLeast", "val": 1000000}, "0 to 999999"),
+    ({"type": "edit_condition", "order": 52, "key": "i:1", "cmp": "AtLeast", "val": True}, "0 to 999999"),
+    ({"type": "remove_condition", "order": 52, "key": 7}, "malformed condition"),
+    ({"type": "add_condition", "order": 52, "item": "SPOON", "cmp": "AtLeast", "val": 1}, "can't be used"),
+    ({"type": "add_condition", "order": 52, "cmp": "AtLeast", "val": 1}, "can't be used"),
+    ({"type": "add_condition", "order": 52, "after": "53", "when": "Completed"}, "malformed order"),
+    ({"type": "add_condition", "order": 52, "after": 53, "when": "NONE"}, "order state"),
+])
+def test_bad_condition_changes_never_reach_df(msg, error):
+    async def go():
+        hub, df, stop, task, port = await start(two_orders())
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps(msg))
+                r = await recv_until(ws, "condition_result")
+                assert not r["ok"] and error in r["error"]
+                assert not [c for c in df.lua_calls if "condition" in c[1]]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_condition_changes_need_the_new_module():
+    async def go():
+        df = two_orders()
+        df.lua_version = "12"
+        hub, df, stop, task, port = await start(df)
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                hello = await recv_until(ws, "hello")
+                assert not hello["can_edit_conditions"] and hello["can_edit_orders"]
+                await ws.send(json.dumps({"type": "remove_condition", "order": 52, "key": "i:1"}))
+                r = await recv_until(ws, "condition_result")
+                assert not r["ok"] and "install-lua" in r["error"]
+                assert not [c for c in df.lua_calls if "condition" in c[1]]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
 def test_moving_orders_changes_the_queue_for_everyone():
     async def go():
         hub, df, stop, task, port = await start(two_orders())
@@ -1355,6 +1953,11 @@ def test_order_status_and_conditions_are_readable():
 @pytest.mark.parametrize("message", [
     {"type": "edit_order", "order": 51, "amount": 5},
     {"type": "move_order", "order": 51, "to": "top"},
+    {"type": "edit_condition", "order": 51, "key": "i:1", "cmp": "AtLeast", "val": 1},
+    {"type": "remove_condition", "order": 51, "key": "i:1"},
+    {"type": "add_condition", "order": 51, "after": 52, "when": "Completed"},
+    {"type": "workshop_job", "id": 400, "job": 11, "action": "cancel"},
+    {"type": "workshop_worker", "id": 400, "unit": 8},
 ])
 def test_roles_without_order_permission_cant_change_orders(message):
     async def go():
@@ -1364,7 +1967,8 @@ def test_roles_without_order_permission_cant_change_orders(message):
                 await recv_until(ws, "hello")
                 await ws.send(json.dumps(message))
                 assert (await recv_until(ws, "denied"))["action"] == message["type"]
-                assert not [c for c in df.lua_calls if c[1] in ("set_order", "move_order")]
+                assert not [c for c in df.lua_calls if c[1] in ("set_order", "move_order", "workshop_job",
+                                                                 "workshop_worker")]
         finally:
             await finish(stop, task)
     run(go())
@@ -1632,6 +2236,303 @@ def test_nobles_need_the_new_module():
                 await ws.send(json.dumps({"type": "vacate_noble", "post": 16}))
                 assert "install-lua" in (await recv_until(ws, "noble_result"))["error"]
                 assert not [c for c in df.lua_calls if c[1] == "nobles"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+# -- M3: stockpiles and zones ----------------------------------------------------
+
+def place_msg(pid, x=4, y=4, z=5):
+    return json.dumps({"type": "inspect_place", "id": pid, "x": x, "y": y, "z": z})
+
+
+def test_inspecting_a_place_and_changing_it_tells_everyone_to_look_again():
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as a, \
+                       connect(f"ws://127.0.0.1:{port}/ws?token=tok-b") as b:
+                hello = await recv_until(a, "hello")
+                assert hello["can_places"] and {"id": "sheet", "label": "Sheets"} in hello["stock_categories"]
+                await recv_until(b, "hello")
+                await recv_until(a, "blocks", lambda m: any(x["z"] == 5 for x in m["blocks"]))
+                await a.send(place_msg(300))
+                place = (await recv_until(a, "place_info"))["place"]
+                assert place["kind"] == "stockpile" and place["categories"] == ["wood"]
+                assert (place["x"], place["y"], place["z"]) == (4, 4, 5) and "found" not in place
+                await a.send(json.dumps({"type": "stockpile_category", "id": 300, "category": "food", "on": True}))
+                assert (await recv_until(a, "place_result"))["ok"]
+                assert lua_call(df, "stockpile_category") == ("rpc.coop", "stockpile_category", "300", "food", "1")
+                assert (await recv_until(b, "place_changed"))["id"] == 300
+                await a.send(json.dumps({"type": "stockpile_containers", "id": 300, "barrels": 1, "bins": 2, "wheelbarrows": 0}))
+                assert (await recv_until(a, "place_result"))["ok"]
+                assert lua_call(df, "stockpile_containers") == ("rpc.coop", "stockpile_containers", "300", "1", "2", "0")
+                await a.send(json.dumps({"type": "rename_place", "id": 300, "name": " Bar\nrels "}))
+                assert (await recv_until(a, "place_result"))["ok"]
+                assert lua_call(df, "rename_place") == ("rpc.coop", "rename_place", "300", "Bar rels")
+                logged = [e for e in hub.action_log.entries() if e["type"] == "stockpile_category"]
+                assert (logged[0]["player"], logged[0]["place"], logged[0]["args"]) == ("Alice", 300, ["food", "1"])
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_assigning_and_freeing_a_room():
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps({"type": "zone_candidates"}))
+                assert (await recv_until(ws, "zone_candidates"))["units"][0]["id"] == 8
+                await ws.send(json.dumps({"type": "zone_owner", "id": 58, "unit": 8}))
+                r = await recv_until(ws, "place_result")
+                assert r["ok"] and r["name"] == "Bomrek, miner"
+                assert lua_call(df, "zone_owner") == ("rpc.coop", "zone_owner", "58", "8")
+                await ws.send(json.dumps({"type": "zone_owner", "id": 58}))
+                assert (await recv_until(ws, "place_result"))["ok"]
+                assert lua_call(df, "zone_owner") == ("rpc.coop", "zone_owner", "58", "")
+                await ws.send(json.dumps({"type": "zone_active", "id": 58, "on": False}))
+                assert (await recv_until(ws, "place_result"))["ok"]
+                assert lua_call(df, "zone_active") == ("rpc.coop", "zone_active", "58", "0")
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_places_on_hidden_tiles_stay_secret():
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await recv_until(ws, "blocks", lambda m: any(x["z"] == 5 for x in m["blocks"]))
+                await ws.send(place_msg(300, 0, 0, 5))        # FakeDF's hidden tile
+                assert "nothing to inspect" in (await recv_until(ws, "place_info"))["error"]
+                await ws.send(place_msg(300, 999, 0, 5))      # off the map
+                assert "nothing to inspect" in (await recv_until(ws, "place_info"))["error"]
+                await ws.send(place_msg(999))                 # no such place
+                assert "nothing to inspect" in (await recv_until(ws, "place_info"))["error"]
+                assert not [c for c in df.lua_calls if c[1] == "place_info" and c[2] == "300"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+@pytest.mark.parametrize("msg,error", [
+    ({"type": "stockpile_category", "id": "300", "category": "food", "on": True}, "malformed"),
+    ({"type": "stockpile_category", "id": 300, "category": "../../secrets", "on": True}, "unknown category"),
+    ({"type": "stockpile_category", "id": 300, "category": ["food"], "on": True}, "unknown category"),
+    ({"type": "stockpile_category", "id": 300, "category": "food", "on": "yes"}, "malformed"),
+    ({"type": "stockpile_containers", "id": 300, "barrels": 1, "bins": "2", "wheelbarrows": 0}, "malformed"),
+    ({"type": "stockpile_containers", "id": 300, "barrels": 1, "bins": 2}, "malformed"),
+    ({"type": "rename_place", "id": 300, "name": 5}, "malformed"),
+    ({"type": "rename_place", "id": 300, "name": "x" * 41}, "40 characters"),
+    ({"type": "zone_owner", "id": 58, "unit": "8"}, "malformed"),
+    ({"type": "zone_active", "id": 58, "on": 1}, "malformed"),
+])
+def test_bad_place_changes_never_reach_df(msg, error):
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps(msg))
+                assert error in (await recv_until(ws, "place_result"))["error"]
+                assert not [c for c in df.lua_calls if c[1] == msg["type"]]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+@pytest.mark.parametrize("role,allowed", [("overseer", True), ("builder", True), ("miner", False),
+                                          ("quartermaster", False), ("commander", False), ("visitor", False)])
+def test_changing_places_needs_the_build_permission_but_anyone_can_look(role, allowed):
+    async def go():
+        hub, df, stop, task, port = await start_with_roles({"Alice": role})
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await recv_until(ws, "blocks", lambda m: any(x["z"] == 5 for x in m["blocks"]))
+                await ws.send(place_msg(58))
+                assert (await recv_until(ws, "place_info"))["ok"]
+                await ws.send(json.dumps({"type": "zone_owner", "id": 58, "unit": 8}))
+                if allowed:
+                    assert (await recv_until(ws, "place_result"))["ok"]
+                else:
+                    await recv_until(ws, "denied")
+                    assert not [c for c in df.lua_calls if c[1] == "zone_owner"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_places_need_the_new_module():
+    async def go():
+        df = FakeDF()
+        df.lua_version = "10"
+        hub, df, stop, task, port = await start(df)
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                hello = await recv_until(ws, "hello")
+                assert not hello["can_places"] and hello["can_nobles"]
+                await ws.send(place_msg(300))
+                assert "install-lua" in (await recv_until(ws, "place_info"))["error"]
+                await ws.send(json.dumps({"type": "zone_owner", "id": 58}))
+                assert "install-lua" in (await recv_until(ws, "place_result"))["error"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+# -- M3: squad orders ------------------------------------------------------------
+
+def station_msg(squad=2, x=4, y=4, z=5):
+    return json.dumps({"type": "squad_station", "squad": squad, "x": x, "y": y, "z": z})
+
+
+def test_stationing_and_cancelling_reach_everyone_and_are_logged():
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as a, \
+                       connect(f"ws://127.0.0.1:{port}/ws?token=tok-b") as b:
+                assert (await recv_until(a, "hello"))["can_squad_orders"]
+                await recv_until(b, "hello")
+                await recv_until(a, "blocks", lambda m: any(x["z"] == 5 for x in m["blocks"]))
+                await a.send(station_msg())
+                r = await recv_until(a, "squad_result")
+                assert r["ok"] and r["action"] == "squad_station"
+                assert lua_call(df, "squad_station") == ("rpc.coop", "squad_station", "2", "4", "4", "5")
+                await recv_until(b, "squads", lambda m: m["squads"][0].get("station") == {"x": 4, "y": 4, "z": 5})
+                await a.send(json.dumps({"type": "squad_clear", "squad": 2}))
+                assert (await recv_until(a, "squad_result"))["ok"]
+                await recv_until(b, "squads", lambda m: "station" not in m["squads"][0])
+                logged = [e for e in hub.action_log.entries() if e["type"] in ("squad_station", "squad_clear")]
+                assert [(e["type"], e["player"], e["squad"]) for e in logged] == [
+                    ("squad_station", "Alice", 2), ("squad_clear", "Alice", 2)]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+@pytest.mark.parametrize("msg,error", [
+    (station_msg(x=0, y=0), "can't station"),         # hidden tile
+    (station_msg(x=999), "can't station"),            # off the map
+    (json.dumps({"type": "squad_station", "squad": 2, "x": "4", "y": 4, "z": 5}), "malformed"),
+    (json.dumps({"type": "squad_station", "squad": "2", "x": 4, "y": 4, "z": 5}), "malformed"),
+])
+def test_bad_stations_never_reach_df(msg, error):
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await recv_until(ws, "blocks", lambda m: any(x["z"] == 5 for x in m["blocks"]))
+                await ws.send(msg)
+                assert error in (await recv_until(ws, "squad_result"))["error"]
+                assert not [c for c in df.lua_calls if c[1] == "squad_station"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_a_failed_target_lookup_is_reported_and_the_hub_stays_up():
+    async def go():
+        df = FakeDF()
+        real = df.run_lua
+
+        def broken(module, function, *args):
+            if function == "squad_targets":
+                raise DFHackRPCError("call 4 failed", code=1)
+            return real(module, function, *args)
+
+        df.run_lua = broken
+        hub, df, stop, task, port = await start(df)
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps({"type": "squad_targets"}))
+                assert "refused" in (await recv_until(ws, "squad_targets"))["error"]
+                assert hub.df_online
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_kill_orders_only_name_what_the_player_can_see():
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await wait_for_visible(hub, 1)
+                await ws.send(json.dumps({"type": "squad_targets"}))
+                units = (await recv_until(ws, "squad_targets"))["units"]
+                assert [u["id"] for u in units] == [1]       # the hidden ambusher stays hidden
+                await ws.send(json.dumps({"type": "squad_kill", "squad": 2, "units": [999]}))
+                assert "can't see" in (await recv_until(ws, "squad_result"))["error"]
+                assert not [c for c in df.lua_calls if c[1] == "squad_kill"]
+                await ws.send(json.dumps({"type": "squad_kill", "squad": 2, "units": [1]}))
+                assert (await recv_until(ws, "squad_result"))["ok"]
+                assert lua_call(df, "squad_kill") == ("rpc.coop", "squad_kill", "2", "1")
+                await recv_until(ws, "squads", lambda m: m["squads"][0]["kill"] == 1)
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+@pytest.mark.parametrize("units,error", [
+    ([], "malformed"), ("1", "malformed"), (["1"], "malformed"), ([True], "malformed"),
+    (list(range(51)), "at most"),
+])
+def test_bad_kill_lists_never_reach_df(units, error):
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps({"type": "squad_kill", "squad": 2, "units": units}))
+                assert error in (await recv_until(ws, "squad_result"))["error"]
+                assert not [c for c in df.lua_calls if c[1] == "squad_kill"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+@pytest.mark.parametrize("role,allowed", [("overseer", True), ("commander", True), ("builder", False),
+                                          ("miner", False), ("quartermaster", False), ("visitor", False)])
+def test_squad_orders_need_the_military_permission(role, allowed):
+    async def go():
+        hub, df, stop, task, port = await start_with_roles({"Alice": role})
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps({"type": "squad_clear", "squad": 2}))
+                if allowed:
+                    assert (await recv_until(ws, "squad_result"))["ok"]
+                else:
+                    assert "manage squads" in (await recv_until(ws, "denied"))["error"]
+                    assert not [c for c in df.lua_calls if c[1] == "squad_clear"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_squad_orders_need_the_new_module():
+    async def go():
+        df = FakeDF()
+        df.lua_version = "11"
+        hub, df, stop, task, port = await start(df)
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                hello = await recv_until(ws, "hello")
+                assert hello["can_squads"] and not hello["can_squad_orders"]
+                await ws.send(json.dumps({"type": "squad_clear", "squad": 2}))
+                assert "install-lua" in (await recv_until(ws, "squad_result"))["error"]
+                await ws.send(json.dumps({"type": "squad_targets"}))
+                assert "install-lua" in (await recv_until(ws, "squad_targets"))["error"]
         finally:
             await finish(stop, task)
     run(go())
@@ -2230,3 +3131,233 @@ def test_a_failed_priority_keeps_the_designation_and_the_hub_online():
         finally:
             await finish(stop, task)
     run(go())
+
+
+def test_a_workshop_shows_its_tasks_and_takes_changes_from_quartermasters():
+    async def go():
+        hub, df, stop, task, port = await start_with_roles({"Alice": "quartermaster"})
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as a, \
+                       connect(f"ws://127.0.0.1:{port}/ws?token=tok-b") as b:
+                assert (await recv_until(a, "hello"))["can_workshops"]
+                await recv_until(b, "hello")
+                await recv_until(a, "blocks", lambda m: any(x["z"] == 5 for x in m["blocks"]))
+                await a.send(place_msg(400))
+                place = (await recv_until(a, "place_info"))["place"]
+                assert place["kind"] == "workshop" and place["jobs"][0]["name"] == "Make granite blocks"
+                await a.send(json.dumps({"type": "workshop_job", "id": 400, "job": 11, "action": "suspend"}))
+                assert (await recv_until(a, "place_result"))["ok"]
+                assert lua_call(df, "workshop_job") == ("rpc.coop", "workshop_job", "400", "11", "suspend")
+                assert (await recv_until(b, "place_changed"))["id"] == 400
+                await a.send(json.dumps({"type": "workshop_worker", "id": 400, "unit": 8}))
+                assert (await recv_until(a, "place_result"))["name"] == "Bomrek, miner"
+                assert lua_call(df, "workshop_worker") == ("rpc.coop", "workshop_worker", "400", "8")
+                await a.send(json.dumps({"type": "workshop_worker", "id": 400}))
+                assert (await recv_until(a, "place_result"))["ok"]
+                assert lua_call(df, "workshop_worker") == ("rpc.coop", "workshop_worker", "400", "")
+                logged = [e for e in hub.action_log.entries() if e["type"] in ("workshop_job", "workshop_worker")]
+                assert logged[0]["args"] == ["11", "suspend"] and [e["place"] for e in logged] == [400, 400, 400]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+@pytest.mark.parametrize("msg,reply,error", [
+    ({"type": "workshop_job", "id": 400, "job": "11", "action": "cancel"}, "place_result", "malformed"),
+    ({"type": "workshop_job", "id": 400, "job": 11, "action": "delete"}, "place_result", "malformed"),
+    ({"type": "workshop_job", "id": 400, "job": 11, "action": ["cancel"]}, "place_result", "malformed"),
+    ({"type": "workshop_worker", "id": 400, "unit": "8"}, "place_result", "malformed"),
+    ({"type": "workshop_worker", "id": "400"}, "place_result", "malformed"),
+])
+def test_bad_workshop_changes_never_reach_df(msg, reply, error):
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps(msg))
+                assert error in (await recv_until(ws, reply))["error"]
+                assert not [c for c in df.lua_calls if c[1] in ("workshop_job", "workshop_worker")]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_a_workshop_that_is_gone_is_refused_by_df():
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps({"type": "workshop_job", "id": 999, "job": 1, "action": "cancel"}))
+                assert "gone" in (await recv_until(ws, "place_result"))["error"]
+                assert not [e for e in hub.action_log.entries() if e["type"] == "workshop_job"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_workshops_need_the_new_module():
+    async def go():
+        df = FakeDF()
+        df.lua_version = "15"
+        hub, df, stop, task, port = await start(df)
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                hello = await recv_until(ws, "hello")
+                assert hello["can_places"] and not hello["can_workshops"]
+                await ws.send(json.dumps({"type": "workshop_job", "id": 400, "job": 11, "action": "cancel"}))
+                assert "install-lua" in (await recv_until(ws, "place_result"))["error"]
+                assert not [c for c in df.lua_calls if c[1] == "workshop_job"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_stocks_are_counted_once_for_everyone_within_a_minute():
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as a, \
+                       connect(f"ws://127.0.0.1:{port}/ws?token=tok-b") as b:
+                assert (await recv_until(a, "hello"))["can_stocks"]
+                await recv_until(b, "hello")
+                await a.send(json.dumps({"type": "stocks"}))
+                await b.send(json.dumps({"type": "stocks"}))
+                ra, rb = await recv_until(a, "stocks"), await recv_until(b, "stocks")
+                assert ra["ok"] and rb["groups"] == ra["groups"] and ra["age"] == 0
+                names = [g["name"] for g in ra["groups"]]
+                assert names == ["Raw materials", "Food and drink", "Weapons and armor"]
+                assert ra["groups"][1]["rows"] == [{"name": "dwarven ale", "count": 40}]
+                assert ra["groups"][2]["rows"] == [{"name": "iron short swords", "count": 2}]
+                assert len([c for c in df.lua_calls if c[1] == "stocks"]) == 1
+                hub._stocks_read -= 61                       # a minute later DF is counted again
+                await a.send(json.dumps({"type": "stocks"}))
+                await recv_until(a, "stocks")
+                assert len([c for c in df.lua_calls if c[1] == "stocks"]) == 2
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_stocks_need_the_new_module():
+    async def go():
+        df = FakeDF()
+        df.lua_version = "16"
+        hub, df, stop, task, port = await start(df)
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                assert not (await recv_until(ws, "hello"))["can_stocks"]
+                await ws.send(json.dumps({"type": "stocks"}))
+                assert "install-lua" in (await recv_until(ws, "stocks"))["error"]
+                assert not [c for c in df.lua_calls if c[1] == "stocks"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_farm_crops_and_fertilizing_go_to_df_and_everyone_looks_again():
+    async def go():
+        hub, df, stop, task, port = await start_with_roles({"Alice": "builder"})
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as a, \
+                       connect(f"ws://127.0.0.1:{port}/ws?token=tok-b") as b:
+                assert (await recv_until(a, "hello"))["can_farms"]
+                await recv_until(b, "hello")
+                await recv_until(a, "blocks", lambda m: any(x["z"] == 5 for x in m["blocks"]))
+                await a.send(place_msg(500))
+                assert (await recv_until(a, "place_info"))["place"]["kind"] == "farm"
+                await a.send(json.dumps({"type": "farm_crop", "id": 500, "season": 2, "plant": -1}))
+                assert (await recv_until(a, "place_result"))["ok"]
+                assert lua_call(df, "farm_crop") == ("rpc.coop", "farm_crop", "500", "2", "-1")
+                assert (await recv_until(b, "place_changed"))["id"] == 500
+                await a.send(json.dumps({"type": "farm_fertilize", "id": 500, "on": True}))
+                assert (await recv_until(a, "place_result"))["ok"]
+                assert lua_call(df, "farm_fertilize") == ("rpc.coop", "farm_fertilize", "500", "1")
+                await a.send(json.dumps({"type": "farm_crop", "id": 999, "season": 0, "plant": 173}))
+                assert "gone" in (await recv_until(a, "place_result"))["error"]
+                logged = [e["type"] for e in hub.action_log.entries() if e["type"].startswith("farm_")]
+                assert logged == ["farm_crop", "farm_fertilize"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+@pytest.mark.parametrize("msg", [
+    {"type": "farm_crop", "id": 500, "season": 4, "plant": 173},
+    {"type": "farm_crop", "id": 500, "season": -1, "plant": 173},
+    {"type": "farm_crop", "id": 500, "season": "0", "plant": 173},
+    {"type": "farm_crop", "id": 500, "season": 0, "plant": -2},
+    {"type": "farm_crop", "id": 500, "season": 0, "plant": "BARLEY"},
+    {"type": "farm_fertilize", "id": 500, "on": 1},
+    {"type": "farm_fertilize", "id": "500", "on": True},
+])
+def test_bad_farm_changes_never_reach_df(msg):
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps(msg))
+                assert "malformed" in (await recv_until(ws, "place_result"))["error"]
+                assert not [c for c in df.lua_calls if c[1].startswith("farm_")]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+@pytest.mark.parametrize("role,allowed", [("overseer", True), ("builder", True), ("quartermaster", False),
+                                          ("visitor", False)])
+def test_farm_changes_need_the_build_permission(role, allowed):
+    async def go():
+        hub, df, stop, task, port = await start_with_roles({"Alice": role})
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps({"type": "farm_crop", "id": 500, "season": 0, "plant": 173}))
+                if allowed:
+                    assert (await recv_until(ws, "place_result"))["ok"]
+                else:
+                    assert (await recv_until(ws, "denied"))["action"] == "farm_crop"
+                    assert not [c for c in df.lua_calls if c[1] == "farm_crop"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_farms_need_the_new_module():
+    async def go():
+        df = FakeDF()
+        df.lua_version = "17"
+        hub, df, stop, task, port = await start(df)
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                hello = await recv_until(ws, "hello")
+                assert hello["can_workshops"] and not hello["can_farms"]
+                await ws.send(json.dumps({"type": "farm_crop", "id": 500, "season": 0, "plant": 173}))
+                assert "install-lua" in (await recv_until(ws, "place_result"))["error"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_units_come_from_coop_lua_for_the_players_levels_and_rfr_for_older_modules(polling_hub):
+    hub, df, _ = polling_hub
+    run(hub.poll_blocks())      # the RFR path checks hidden tiles against the hub's own map
+    rfr_calls = []
+    original = df.units
+    df.units = lambda: (rfr_calls.append(1), original())[1]
+    run(hub.poll_units())
+    lua = [c for c in df.lua_calls if c[1] == "units"]
+    levels = sorted({z for s in hub.sessions.values() for z in s.zs})
+    assert lua and lua[-1][2:] == (",".join(map(str, levels)), "0") and not rfr_calls
+    alice = next(s for s in hub.sessions.values() if s.name == "Alice")
+    shown = {u["i"] for u in json.loads(alice.last_units)["units"]}
+    assert shown == {1}                 # not the one on a hidden tile, not the one in ambush
+    alice.graphics = True
+    run(hub.poll_units())
+    assert [c for c in df.lua_calls if c[1] == "units"][-1][3] == "1"     # gear only for graphics
+    hub.lua_version = 18
+    alice.last_units = None
+    run(hub.poll_units())
+    assert rfr_calls and {u["i"] for u in json.loads(alice.last_units)["units"]} == {1}

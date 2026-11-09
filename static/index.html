@@ -83,7 +83,10 @@
   #tapinfo { display: none; position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 6px 10px;
     background: rgba(21, 22, 26, .92); border: 1px solid var(--line); border-radius: 6px;
     pointer-events: none; white-space: pre-wrap; }
-  #side { width: 240px; background: var(--panel); border-left: 1px solid var(--line);
+  #sidedrag { flex: none; width: 7px; margin-left: -3px; margin-right: -4px; z-index: 4; cursor: col-resize;
+    touch-action: none; background: transparent; }
+  #sidedrag:hover, #sidedrag:focus-visible, #sidedrag.dragging { background: var(--accent); outline: none; }
+  #side { flex: none; width: var(--side-width, 240px); background: var(--panel); border-left: 1px solid var(--line);
     padding: 10px 12px; overflow-y: auto; }
   #side h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
     color: var(--dim); margin: 14px 0 6px; font-weight: normal; }
@@ -143,6 +146,12 @@
   .orderedit input, .orderedit select, .orderedit button { font: inherit; color: var(--text); background: #22242a;
     border: 1px solid var(--line); border-radius: 3px; padding: 2px 4px; min-width: 0; }
   .orderedit input { width: 52px; flex: none; }
+  .orderedit .condrow { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; min-width: 0; color: var(--dim); }
+  .orderedit .condrow select { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+  .orderedit .condval { width: 64px; }
+  .orderedit .addcondval { width: 64px; }
+  .orderedit .condwhat { flex: 1 1 60px; min-width: 0; overflow-wrap: anywhere; }
+  .orderedit label.row { align-items: center; justify-content: space-between; }
   .orderedit select { flex: 1; }
   .orderedit button { cursor: pointer; }
   .orderedit .row button[data-to] { flex: 1; }
@@ -160,11 +169,57 @@
   .squadedit .member .who { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .squadedit .member button { font: inherit; color: var(--dim); background: none; border: none; cursor: pointer; padding: 0 2px; }
   .squadedit .member button:hover { color: #ff7777; }
-  .squadedit .row { display: flex; gap: 5px; min-width: 0; }
+  .squadedit .row { display: flex; gap: 5px; min-width: 0; align-items: center; }
+  .squadorders { display: grid; gap: 5px; grid-template-columns: minmax(0, 1fr); }
+  .squadedit .row > .count { flex: 1; min-width: 0; }
+  .squadedit .squadgo { font: inherit; color: var(--accent); background: none; border: none; padding: 0;
+    text-align: left; cursor: pointer; }
   .squadedit input, .squadedit select, .squadedit .row button { font: inherit; color: var(--text); background: #22242a;
     border: 1px solid var(--line); border-radius: 3px; padding: 2px 4px; min-width: 0; }
   .squadedit input, .squadedit select { flex: 1; }
   .squadedit .row button { cursor: pointer; }
+  #citizentools { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; margin-bottom: 4px; }
+  #citizentools[hidden], #citizens[hidden] { display: none; }
+  #citizentools input, #citizentools select, #citizenstoggle { font: inherit; color: var(--text); background: #22242a;
+    border: 1px solid var(--line); border-radius: 3px; padding: 2px 4px; min-width: 0; }
+  #citizenstoggle { cursor: pointer; float: right; font-size: 11px; text-transform: none; letter-spacing: 0; }
+  #citizens { max-height: 45vh; overflow-y: auto; }
+  #detailstoggle, #detailfilter { font: inherit; color: var(--text); background: #22242a; border: 1px solid var(--line);
+    border-radius: 3px; padding: 2px 4px; min-width: 0; }
+  #detailstoggle { cursor: pointer; float: right; font-size: 11px; text-transform: none; letter-spacing: 0; }
+  #detailfilter { width: 100%; box-sizing: border-box; margin-bottom: 4px; }
+  #detailfilter[hidden], #details[hidden] { display: none; }
+  #details { max-height: 55vh; overflow-y: auto; }
+  #stockstoggle, #stockfilter { font: inherit; color: var(--text); background: #22242a; border: 1px solid var(--line);
+    border-radius: 3px; padding: 2px 4px; min-width: 0; }
+  #stockstoggle { cursor: pointer; float: right; font-size: 11px; text-transform: none; letter-spacing: 0; }
+  #stockfilter { width: 100%; box-sizing: border-box; margin-bottom: 4px; }
+  #stockfilter[hidden], #stocks[hidden] { display: none; }
+  #stocks { max-height: 55vh; overflow-y: auto; }
+  .stockgroup summary { display: flex; gap: 6px; cursor: pointer; padding: 2px 0; }
+  .stockgroup summary .sname { flex: 1; min-width: 0; }
+  .stockrow { display: flex; gap: 6px; padding: 1px 0 1px 13px; min-width: 0; }
+  .stockrow .sname { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .stockgroup .scount, .stockrow .scount { flex: none; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .detail { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; }
+  .detail button.name { flex: 1; min-width: 0; font: inherit; color: var(--text); background: none; border: none;
+    cursor: pointer; padding: 0 2px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .detail button.name:hover { color: var(--accent); }
+  .detail .who { flex: none; color: var(--dim); }
+  .detail .who.none { color: #ffdd33; }
+  .detailedit { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; padding: 2px 0 8px 13px; color: var(--dim); }
+  .detailedit select { font: inherit; color: var(--text); background: #22242a; border: 1px solid var(--line);
+    border-radius: 3px; padding: 2px 4px; min-width: 0; }
+  .detailperson { display: flex; align-items: center; gap: 5px; min-width: 0; color: var(--text); cursor: pointer; }
+  .detailperson span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .citizen { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 6px; width: 100%; padding: 3px 2px;
+    font: inherit; color: var(--text); background: none; border: none; text-align: left; cursor: pointer; }
+  .citizen:hover .cname { color: var(--accent); }
+  .citizen .cname, .citizen .cjob { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .citizen .cjob { grid-column: 1 / -1; color: var(--dim); }
+  .citizen .cmood { color: var(--dim); }
+  .citizen .cmood.bad { color: #ffdd33; }
+  .citizen.away .cname { color: var(--dim); }
   #nobles { max-height: 45vh; overflow-y: auto; }
   .noble { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; }
   .noble button.name { flex: none; max-width: 55%; font: inherit; color: var(--text); background: none; border: none;
@@ -180,6 +235,30 @@
     border: 1px solid var(--line); border-radius: 3px; padding: 2px 4px; min-width: 0; }
   .nobleedit select { flex: 1; }
   .nobleedit .row button { cursor: pointer; }
+  .placebox { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; overflow-wrap: anywhere; }
+  .placebox .place-title { color: var(--accent); }
+  .placebox .count { color: var(--dim); }
+  .placebox .row { display: flex; gap: 5px; min-width: 0; align-items: center; }
+  .placebox input:not([type=checkbox]), .placebox select, .placebox button { font: inherit; color: var(--text); background: #22242a;
+    border: 1px solid var(--line); border-radius: 3px; padding: 2px 4px; min-width: 0; }
+  .placebox input:not([type=checkbox]), .placebox select { flex: 1; }
+  .placebox button { cursor: pointer; }
+  .placebox .cats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px 6px; }
+  .placebox .cats label { display: flex; align-items: center; gap: 4px; cursor: pointer; min-width: 0; }
+  .placebox .limits { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+  .placebox .limits label { display: grid; gap: 2px; color: var(--dim); min-width: 0; }
+  .placebox .limits input { width: 100%; }
+  .placebox .farmseasons { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 8px;
+    align-items: center; }
+  .placebox .farmseason { display: contents; }
+  .placebox .farmseason .now { color: var(--accent); }
+  .placebox .warn { color: #ffdd33; }
+  .placebox .farmfert { display: flex; gap: 5px; align-items: center; cursor: pointer; }
+  .placebox .jobs { display: grid; gap: 4px; }
+  .placebox .job { display: grid; gap: 2px; padding: 3px 4px; background: #1b1d22; border-radius: 3px; min-width: 0; }
+  .placebox .job.suspended .jobname { color: var(--dim); text-decoration: line-through; }
+  .placebox .jobbtns { display: flex; flex-wrap: wrap; gap: 3px; }
+  .placebox .jobbtns button { padding: 0 5px; }
   .keys { color: var(--dim); }
   .keys kbd { color: var(--text); background: #22242a; border: 1px solid var(--line);
     border-radius: 3px; padding: 0 4px; }
@@ -191,6 +270,7 @@
   .offline { color: #ff6666; }
   @media (max-width: 700px) {
     #top { gap: 10px; padding: 6px 8px; }
+    #sidedrag { display: none; }
     #side { display: none; position: fixed; right: 0; top: 0; bottom: 0; width: min(280px, 85vw);
       z-index: 10; box-shadow: -8px 0 24px rgba(0, 0, 0, .5); }
     #side.open { display: block; }
@@ -242,6 +322,8 @@
   <div id="wrap"><canvas id="map"></canvas><div id="toast"></div><div id="chatflash"></div>
   <div id="away" hidden><div class="card"><h3>While you were away</h3><div class="span" id="awayspan"></div>
     <div id="awaybody"></div><button id="awayclose">Back to the fortress</button></div></div><div id="palette"><div class="tabs"></div><div class="items"></div></div><div id="tapinfo"></div></div>
+  <div id="sidedrag" role="separator" aria-orientation="vertical" aria-label="Resize side panel" tabindex="0"
+       title="Drag to resize; double-click to reset"></div>
   <div id="side">
     <h2>Chat</h2>
     <div id="chatlog"></div>
@@ -257,12 +339,30 @@
     </div>
     <input id="orderfilter" type="search" placeholder="Filter orders" aria-label="Filter work orders" hidden>
     <div id="orders"><span class="count">—</span></div>
+    <h2>Citizens <button id="citizenstoggle" title="Show everyone in the fort (u)">Show</button></h2>
+    <div id="citizentools" hidden>
+      <input id="citizenfilter" type="search" placeholder="Filter" title="Filter by name, job, mood or squad" aria-label="Filter citizens">
+      <select id="citizensort" aria-label="Sort citizens">
+        <option value="name">By name</option>
+        <option value="mood">Unhappiest first</option>
+        <option value="idle">Idle first</option>
+      </select>
+    </div>
+    <div id="citizens" hidden></div>
+    <h2>Work details <button id="detailstoggle" title="Who does what (l)">Show</button></h2>
+    <input id="detailfilter" type="search" placeholder="Filter people" aria-label="Filter people in this work detail" hidden>
+    <div id="details" hidden></div>
+    <h2>Stocks <button id="stockstoggle" title="What the fort has (k)">Show</button></h2>
+    <input id="stockfilter" type="search" placeholder="Filter stocks" aria-label="Filter stocks" hidden>
+    <div id="stocks" hidden></div>
     <h2>Squads</h2>
     <div id="squads"><span class="count">—</span></div>
     <h2>Nobles</h2>
     <div id="nobles"><span class="count">—</span></div>
     <h2>Under cursor</h2>
     <div id="hover">—</div>
+    <h2>Place</h2>
+    <div id="placeinfo"><span class="count">click a stockpile or zone to see it</span></div>
     <h2>Creature</h2>
     <div id="unitinfo"><span class="dim">click a creature to inspect it</span></div>
     <h2>Announcements</h2>
@@ -280,7 +380,7 @@
       In the dig menu, <kbd>p</kbd> / <kbd>P</kbd>: priority up / down (1 is done first)<br>
       Click two corners, or <kbd>Enter</kbd> at each corner<br>
       <kbd>b</kbd> build, with DF's menu letters: <kbd>b</kbd><kbd>o</kbd><kbd>f</kbd><kbd>p</kbd> farm plot, <kbd>b</kbd><kbd>p</kbd><kbd>r</kbd> door<br>
-      <kbd>p</kbd> stockpiles · <kbd>z</kbd> zones · <kbd>o</kbd> work orders · <kbd>q</kbd> squads · <kbd>n</kbd> nobles · <kbd>N</kbd> announcements<br>
+      <kbd>p</kbd> stockpiles · <kbd>z</kbd> zones · <kbd>o</kbd> work orders · <kbd>q</kbd> squads · <kbd>n</kbd> nobles · <kbd>u</kbd> citizens · <kbd>l</kbd> work details · <kbd>k</kbd> stocks · <kbd>N</kbd> announcements<br>
       <kbd>X</kbd> remove a building · <kbd>g</kbd> ping · <kbd>Enter</kbd> chat (in Look)<br>
       Right-click: cancel
     </div>
