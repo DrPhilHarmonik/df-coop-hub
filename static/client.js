@@ -21,7 +21,12 @@ const st = {
   pageStack: [],                   // the build menu path, e.g. ["MAIN", "WORKSHOPS", "WORKSHOPS_FARMING"]
   orderCatalog: { groups: [], orders: [] }, canOrder: false, orders: [],
   canSquads: false, squads: [], squadOpen: null, squadCandidates: null,
+  canSquadOrders: false, stationSquad: null, squadTargets: null,
   canNobles: false, nobles: [], nobleOpen: null, nobleCandidates: null,
+  canCitizens: false, citizens: null, citizensOpen: false, citizenTimer: null, pendingInspect: null,
+  canWorkDetails: false, details: null, detailPeople: [], detailModes: [], detailsOpen: false, detailOpen: null,
+  detailTimer: null, detailsStale: false,
+  canPlaces: false, stockCategories: [], place: null, zoneCandidates: null, placeClick: null,
   reports: [], canInspect: false,
   chat: [], pings: [],             // pings: {x, y, z, color, from, until}
   role: "", perms: new Set(),
@@ -30,7 +35,7 @@ const st = {
 
 // toolbar mode -> the permission it needs
 const MODE_NEEDS = { dig: "dig", channel: "dig", updown: "dig", down: "dig", up: "dig", ramp: "dig",
-                     erase: "dig", remove: "remove", build: "build", ping: "chat" };
+                     smooth: "dig", engrave: "dig", fortify: "dig", erase: "dig", remove: "remove", build: "build", ping: "chat", station: "military" };
 const PING_MS = 4000;
 const graphics = { mode: "text", sprites: {}, layouts: {}, pages: new Map() };
 
@@ -164,7 +169,13 @@ const MODE_COLORS = { dig: "#e0b050", channel: "#5aa0ff", updown: "#c080ff", dow
                       up: "#c080ff", ramp: "#80d080", erase: "#ff6666" };
 // Steam DF's defaults: m opens the dig menu; inside it u channel, t stairs
 // (pressing t again cycles the stair kind, as DF's stair tool does), r ramp.
-const DIG_FAMILY = new Set(["dig", "channel", "updown", "down", "up", "ramp"]);
+const DIG_FAMILY = new Set(["dig", "channel", "updown", "down", "up", "ramp", "smooth", "engrave", "fortify"]);
+// Smoothing marks come from the hub as letters; DF turns them into jobs at once, so the hub
+// reads them back from the jobs and they stay drawn until the work is done.
+const DETAIL_MODES = { v: "smooth", i: "engrave", f: "fortify" };
+const DETAIL_CYCLE = ["smooth", "engrave", "fortify"];
+const DETAIL_NAMES = { smooth: "Smooth", engrave: "Engrave", fortify: "Fortify" };
+const DETAIL_STYLE = { s: ["#8fd3ff", "s"], e: ["#ffcf6b", "e"], f: ["#c9a2ff", "f"] };
 const STAIR_CYCLE = ["updown", "down", "up"];
 
 // -- token -------------------------------------------------------------------
@@ -240,8 +251,19 @@ function onMessage(m) {
       renderBuildButton();
       st.orderCatalog = m.order_catalog; st.canOrder = m.can_order; st.orders = m.orders;
       st.canEditOrders = m.can_edit_orders;
-      st.canSquads = m.can_squads; st.squads = m.squads; renderSquads();
+      st.canEditConditions = m.can_edit_conditions;
+      if (document.hidden) sendVisibility();
+      st.canSquads = m.can_squads; st.squads = m.squads;
+      st.canSquadOrders = m.can_squad_orders; renderSquads();
       st.canNobles = m.can_nobles; st.nobles = m.nobles; renderNobles();
+      st.canCitizens = m.can_citizens; if (st.citizensOpen) askCitizens();
+      st.canStocks = !!m.can_stocks; if (st.stocksOpen) askStocks();
+      st.canWorkDetails = m.can_work_details; st.detailModes = m.work_detail_modes || [];
+      if (st.detailsOpen) askDetails();
+      st.canPlaces = m.can_places; st.stockCategories = m.stock_categories || [];
+      st.canDetail = !!m.can_detail;
+      for (const btn of document.querySelectorAll("[data-detail]")) btn.hidden = !st.canDetail;
+      st.canWorkshops = !!m.can_workshops; st.canFarms = !!m.can_farms; renderPlace();
       renderOrderForm(); renderOrders();
       st.canInspect = m.can_inspect; st.reports = m.reports || []; renderReports();
       st.chat = m.chat || []; renderChat();
@@ -253,8 +275,25 @@ function onMessage(m) {
       for (const b of m.blocks) st.blocks.set(`${b.x},${b.y},${b.z}`, b);
       break;
     case "buildings": st.buildings = m.buildings; break;
+    case "citizens":
+      if (m.ok) { st.citizens = m.citizens; renderCitizens(); }
+      else toast(m.error || "can't list citizens", true);
+      break;
+    case "stocks":
+      if (m.ok) { st.stocks = m.groups; st.stocksAge = m.age; st.stocksAt = Date.now(); renderStocks(); }
+      else toast(m.error || "can't count stocks", true);
+      break;
+    case "work_details":
+      if (m.ok) { st.details = m.details; st.detailPeople = m.people; renderDetails(); }
+      else toast(m.error || "can't list work details", true);
+      break;
+    case "work_detail_result":
+      if (!m.ok) toast(m.error || "that didn't work", true);
+      askDetails();
+      break;
     case "units":
       st.units = m.units;
+      inspectPending();
       if (st.paused !== m.paused) { st.paused = m.paused; renderPause(); }
       break;
     case "players": st.players = m.players; renderPlayers(); break;
@@ -267,6 +306,36 @@ function onMessage(m) {
     case "orders": st.orders = m.orders; renderOrders(); break;
     case "squads": st.squads = m.squads; renderSquads(); break;
     case "nobles": st.nobles = m.nobles; renderNobles(); break;
+    case "place_info":
+      if (m.ok) {
+        st.place = m.place;
+        renderPlace();
+        if (st.placeOpenSide) openSide($("placeinfo"));
+        st.placeOpenSide = false;
+      } else if (st.placeOpenSide) {
+        st.placeOpenSide = false;
+        toast(m.error || "nothing to inspect there", true);
+      } else if (st.place && m.error === "nothing to inspect there") {
+        st.place = null;      // it was taken down
+        renderPlace();
+      }
+      break;
+    case "place_changed":
+      if (st.place && st.place.id === m.id) {
+        send({ type: "inspect_place", id: m.id, x: st.place.x, y: st.place.y, z: st.place.z });
+      }
+      break;
+    case "zone_candidates":
+      if (m.ok) { st.zoneCandidates = m.units; renderPlace(); }
+      else toast(m.error || "that didn't work", true);
+      break;
+    case "place_result":
+      if (!m.ok) { toast(m.error || "that didn't work", true); renderPlace(); break; }
+      if (m.action === "zone_owner") toast(m.name ? `Assigned to ${m.name}` : "The room is free");
+      else if (m.action === "rename_place") toast("Renamed");
+      else if (m.action === "stockpile_containers") toast("Limits updated");
+      else if (m.action === "workshop_worker") toast(m.name ? `Only ${m.name} works there now` : "Anyone may work there");
+      break;
     case "noble_candidates":
       if (m.ok) { st.nobleCandidates = m.units; renderNobles(); }
       else toast(m.error || "that didn't work", true);
@@ -280,13 +349,20 @@ function onMessage(m) {
       if (m.ok) { st.squadCandidates = m.units; renderSquads(); }
       else toast(m.error || "that didn't work", true);
       break;
+    case "squad_targets":
+      if (m.ok) { st.squadTargets = m.units; renderSquads(); }
+      else { st.squadTargets = []; renderSquads(); toast(m.error || "that didn't work", true); }
+      break;
     case "squad_result":
       if (!m.ok) { toast(m.error || "that didn't work", true); break; }
       if (m.action === "squad_add") toast(`${m.name} joined the squad`);
       else if (m.action === "squad_remove") toast(`${m.name} left the squad`);
+      else if (m.action === "squad_station") toast("Squad on its way");
+      else if (m.action === "squad_kill") toast("Kill order given");
+      else if (m.action === "squad_clear") toast("Orders cancelled");
       else toast(`Squad is now ${m.name}`);
       if (document.activeElement && $("squads").contains(document.activeElement)) document.activeElement.blur();
-      if (m.action !== "rename_squad" && st.squadOpen !== null) send({ type: "squad_candidates" });
+      if ((m.action === "squad_add" || m.action === "squad_remove") && st.squadOpen !== null) send({ type: "squad_candidates" });
       break;
     case "reports": st.reports = st.reports.concat(m.reports).slice(-100); renderReports(); break;
     case "chat":
@@ -329,6 +405,11 @@ function onMessage(m) {
     case "move_result":
       if (!m.ok) toast(m.error || "that didn't work", true);
       break;
+    case "condition_result":
+      if (m.ok) {
+        if (document.activeElement && $("orders").contains(document.activeElement)) document.activeElement.blur();
+      } else toast(m.error || "that didn't work", true);
+      break;
     case "build_result": {
       // "Food" reads better as "Food stockpile" once it's out of the palette.
       const it = st.catalog.items.find((i) => i.id === m.item);
@@ -345,10 +426,15 @@ function onMessage(m) {
       else if (m.outcome === "already") toast(`${m.what} is already marked for removal`);
       else toast(`Removed ${m.what}`);
       break;
+    case "detail_marks":
+      st.detailMarks = new Map(m.marks.map(([x, y, z, k]) => [`${x},${y},${z}`, k]));
+      break;
     case "dig_result":
       if (!m.ok) toast(m.error || "that didn't work", true);
       else if (!m.applied) toast("Nothing there can take that; no tiles changed", true);
-      else toast(`${m.kind === "erase" ? "Cleared" : "Designated"} ${m.applied} tile${m.applied === 1 ? "" : "s"}` +
+      else toast(`${m.kind === "erase" ? "Cleared" : m.kind === "smooth" ? "Marked to smooth"
+                    : m.kind === "engrave" ? "Marked to engrave" : m.kind === "fortify" ? "Marked to fortify"
+                    : "Designated"} ${m.applied} tile${m.applied === 1 ? "" : "s"}` +
                  (m.kind !== "erase" && m.priority && m.priority !== 4 ? ` at priority ${m.priority}` : "") +
                  (m.skipped ? `, ${m.skipped} skipped` : "") + (m.error ? ` (${m.error})` : ""), !!m.error);
       break;
@@ -360,6 +446,12 @@ function onMessage(m) {
 
 let lastSent = "";
 let sendTimer = null;
+
+// With every player's tab in the background, the hub polls DF less.
+function sendVisibility() {
+  send({ type: "visibility", hidden: document.hidden });
+}
+document.addEventListener("visibilitychange", sendVisibility);
 
 function sendView(now) {
   const cx = st.cursor ? st.cursor.x : Math.round(st.camX);
@@ -479,6 +571,24 @@ function glyph(ch, x, y, color, alpha) {
   ctx.fillText(ch, x + st.cell / 2, y + st.cell / 2 + 1);
 }
 
+function detailMark(x, y, px, py, size) {
+  const k = st.detailMarks && st.detailMarks.get(`${x},${y},${st.z}`);
+  if (!k) return;
+  const [color, letter] = DETAIL_STYLE[k] || DETAIL_STYLE.s;
+  ctx.globalAlpha = 0.9;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1, size / 12);
+  const inset = Math.max(1, size / 8);
+  ctx.strokeRect(px + inset, py + inset, size - 2 * inset, size - 2 * inset);
+  if (size >= 12) {
+    ctx.fillStyle = color;
+    ctx.font = `${Math.round(size * 0.42)}px "DejaVu Sans Mono", monospace`;
+    ctx.fillText(letter, px + size * 0.22, py + size * 0.26);
+    ctx.font = `${Math.round(size * 0.95)}px "DejaVu Sans Mono", Menlo, monospace`;
+  }
+  ctx.globalAlpha = 1;
+}
+
 function designation(tile, x, y, px, py, size) {
   if (!tile.d) return;
   const owner = st.owners.get(`${x},${y},${st.z}`);
@@ -540,6 +650,7 @@ function draw() {
         glyph(String(tile.m || tile.w), px, py, tile.m ? "#ff4400" : "#4a8cff", 1);
       }
       designation(tile, x, y, px, py, c);
+      detailMark(x, y, px, py, c);
     }
   }
 
@@ -774,6 +885,14 @@ window.addEventListener("keydown", (e) => {
     setPriority(st.priority + (k === "p" ? -1 : 1));
     return;
   }
+  else if (DIG_FAMILY.has(st.mode) && DETAIL_MODES[k]) {
+    if (!st.canDetail) { toast("Smoothing needs the host to update the in-game module", true); return; }
+    // v cycles like Stairs: smooth, engrave, fortify.
+    const mode = k === "v" && DETAIL_CYCLE.includes(st.mode)
+      ? DETAIL_CYCLE[(DETAIL_CYCLE.indexOf(st.mode) + 1) % DETAIL_CYCLE.length] : DETAIL_MODES[k];
+    setMode(mode);
+    return;
+  }
   else if (DIG_FAMILY.has(st.mode) && (k === "u" || k === "r" || k === "t")) {
     if (k === "u") setMode("channel");
     else if (k === "r") setMode("ramp");
@@ -794,6 +913,9 @@ window.addEventListener("keydown", (e) => {
   }
   else if (k === "q") { openSide($("squads")); return; }
   else if (k === "n") { openSide($("nobles")); return; }
+  else if (k === "u") { showCitizens(true); openSide($("citizenstoggle").parentElement); return; }
+  else if (k === "l") { showDetails(true); openSide($("detailstoggle").parentElement); return; }
+  else if (k === "k") { showStocks(true); openSide($("stockstoggle").parentElement); return; }
   else if (k === "N") { openSide($("reports")); return; }
   else if (k === "g") {
     if (st.cursor && can("chat")) send({ type: "ping", x: st.cursor.x, y: st.cursor.y, z: st.z });
@@ -927,6 +1049,7 @@ function modeHint() {
   if (st.mode === "look") return "";
   if (st.mode === "remove") return "click a building, stockpile or zone";
   if (st.mode === "ping") return "click to point everyone there";
+  if (st.mode === "station") return "click where the squad should stand (Esc cancels)";
   if (st.mode === "build" && st.buildItem && !st.buildItem.area) return `click to place ${st.buildItem.label}`;
   return "click the first corner";
 }
@@ -939,6 +1062,12 @@ function setMode(mode) {
   st.mode = mode;
   st.corner = null;
   if (mode !== "build") st.buildItem = null;
+  if (mode !== "station") st.stationSquad = null;
+  if (DETAIL_CYCLE.includes(mode)) {
+    // One button for the three: it shows and sends whichever is chosen.
+    $("detailbtn").dataset.mode = mode;
+    $("detailname").textContent = DETAIL_NAMES[mode];
+  }
   for (const btn of document.querySelectorAll("#toolbar [data-mode]"))
     btn.classList.toggle("on", btn.dataset.mode === mode);
   renderBuildButton();
@@ -970,7 +1099,8 @@ function pickCorner() {
   if (!st.cursor) return;
   if (st.mode === "look") {
     const u = st.units.find((u) => u.x === st.cursor.x && u.y === st.cursor.y && u.z === st.z);
-    if (u && st.canInspect) send({ type: "inspect", unit: u.i });
+    if (u && st.canInspect) { send({ type: "inspect", unit: u.i }); return; }
+    inspectPlaceAtCursor();
     return;
   }
   if (st.mode === "build" && st.buildItem && !st.buildItem.area) {
@@ -979,6 +1109,11 @@ function pickCorner() {
   }
   if (st.mode === "ping") {
     send({ type: "ping", x: st.cursor.x, y: st.cursor.y, z: st.z });
+    return;
+  }
+  if (st.mode === "station") {
+    send({ type: "squad_station", squad: st.stationSquad, x: st.cursor.x, y: st.cursor.y, z: st.z });
+    setMode("look");
     return;
   }
   if (st.mode === "remove") {
@@ -1005,7 +1140,13 @@ function pickCorner() {
 }
 
 for (const btn of document.querySelectorAll("#toolbar [data-mode]"))
-  btn.onclick = () => { closePalette(); setMode(btn.dataset.mode); };
+  btn.onclick = () => {
+    closePalette();
+    const mode = btn.dataset.mode;
+    if (btn.id === "detailbtn" && st.mode === mode)
+      setMode(DETAIL_CYCLE[(DETAIL_CYCLE.indexOf(mode) + 1) % DETAIL_CYCLE.length]);
+    else setMode(mode);
+  };
 
 // -- while you were away --
 
@@ -1176,18 +1317,24 @@ function orderEditor(o) {
   status.className = "count";
   status.textContent = ORDER_STATUS[o.status] || "";
   box.append(status);
+  const editConds = can("order") && st.canEditConditions;
   if (o.conds.length) {
-    const list = document.createElement("ul");
-    for (const text of o.conds) {
-      const li = document.createElement("li");
-      li.textContent = text;
-      list.append(li);
-    }
     const head = document.createElement("div");
     head.className = "count";
     head.textContent = "Conditions:";
-    box.append(head, list);
+    box.append(head);
+    if (editConds) box.append(...o.conds.map((text, i) => conditionRow(o, text, (o.cond_info || [])[i])));
+    else {
+      const list = document.createElement("ul");
+      for (const text of o.conds) {
+        const li = document.createElement("li");
+        li.textContent = text;
+        list.append(li);
+      }
+      box.append(list);
+    }
   }
+  if (editConds) box.append(...addConditionRows(o));
   if (!can("order") || !st.canEditOrders) {
     const repeat = document.createElement("div");
     repeat.className = "count";
@@ -1211,6 +1358,13 @@ function orderEditor(o) {
     freq.append(opt);
   }
   freq.value = o.freq;
+  const limit = document.createElement("input");
+  limit.type = "number";
+  limit.min = 0;
+  limit.max = 99;
+  limit.value = o.max_workshops || 0;
+  limit.title = "The most workshops that may work on this at once; 0 means no limit";
+  limit.className = "editlimit";
   const save = document.createElement("button");
   save.textContent = "Save";
   save.className = "editsave";
@@ -1222,13 +1376,28 @@ function orderEditor(o) {
       msg.amount = n;
     }
     if (freq.value !== o.freq) msg.freq = freq.value;
-    if (msg.amount === undefined && msg.freq === undefined) { toast("Nothing changed"); return; }
+    if (st.canEditConditions && limit.value !== String(o.max_workshops || 0)) {
+      const n = parseInt(limit.value, 10);
+      if (!(n >= 0 && n <= 99)) { toast("The workshop limit must be 0 to 99", true); return; }
+      msg.max_workshops = n;
+    }
+    if (msg.amount === undefined && msg.freq === undefined && msg.max_workshops === undefined) {
+      toast("Nothing changed");
+      return;
+    }
     send(msg);
   };
   amount.onkeydown = (e) => { if (e.key === "Enter") save.click(); };
   const row = document.createElement("div");
   row.className = "row";
   row.append(amount, freq, save);
+  box.append(row);
+  if (st.canEditConditions) {
+    const limits = document.createElement("label");
+    limits.className = "row count";
+    limits.append("Most workshops at once (0 = no limit)", limit);
+    box.append(limits);
+  }
   const moves = document.createElement("div");
   moves.className = "row";
   for (const [to, text] of [["top", "To top"], ["bottom", "To bottom"]]) {
@@ -1238,8 +1407,112 @@ function orderEditor(o) {
     b.onclick = () => send({ type: "move_order", order: o.id, to });
     moves.append(b);
   }
-  box.append(row, moves);
+  box.append(moves);
   return box;
+}
+
+function selectOf(options, value) {
+  const select = document.createElement("select");
+  for (const { id, label } of options) {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = label;
+    select.append(opt);
+  }
+  if (value !== undefined) select.value = value;
+  return select;
+}
+
+function conditionValue(input) {
+  const n = parseInt(input.value, 10);
+  if (n >= 0 && n <= 999999) return n;
+  toast("The number must be 0 to 999999", true);
+  return null;
+}
+
+// One condition: its comparison and number can change if it counts items, and
+// it can go. An old module sends no key, so the row stays plain text.
+function conditionRow(o, text, info) {
+  const row = document.createElement("div");
+  row.className = "condrow";
+  if (!info || !info.key) {
+    row.textContent = text;
+    return row;
+  }
+  if (info.cmp) {
+    const cmp = selectOf(st.orderCatalog.compares || [], info.cmp);
+    cmp.className = "condcmp";
+    const val = document.createElement("input");
+    val.type = "number";
+    val.min = 0;
+    val.max = 999999;
+    val.value = info.val;
+    val.className = "condval";
+    const change = () => {
+      const n = conditionValue(val);
+      if (n === null || (n === info.val && cmp.value === info.cmp)) return;
+      send({ type: "edit_condition", order: o.id, key: info.key, cmp: cmp.value, val: n });
+    };
+    cmp.onchange = change;
+    val.onchange = change;
+    const what = document.createElement("span");
+    what.className = "condwhat";
+    what.textContent = info.what;
+    row.append(cmp, val, what);
+  } else {
+    const what = document.createElement("span");
+    what.className = "condwhat";
+    what.textContent = text;
+    row.append(what);
+  }
+  const remove = document.createElement("button");
+  remove.textContent = "×";
+  remove.className = "condremove";
+  remove.title = "Remove this condition";
+  remove.setAttribute("aria-label", `Remove condition: ${text}`);
+  remove.onclick = () => send({ type: "remove_condition", order: o.id, key: info.key });
+  row.append(remove);
+  return row;
+}
+
+function addConditionRows(o) {
+  const catalog = st.orderCatalog;
+  const button = (cls) => {
+    const b = document.createElement("button");
+    b.textContent = "Add";
+    b.className = cls;
+    return b;
+  };
+  const item = selectOf(catalog.cond_items || []);
+  item.className = "addconditem";
+  const cmp = selectOf(catalog.compares || [], "AtLeast");
+  cmp.className = "addcondcmp";
+  const val = document.createElement("input");
+  val.type = "number";
+  val.min = 0;
+  val.max = 999999;
+  val.value = 10;
+  val.className = "addcondval";
+  const addItem = button("addcondadd");
+  addItem.onclick = () => {
+    const n = conditionValue(val);
+    if (n !== null) send({ type: "add_condition", order: o.id, item: item.value, cmp: cmp.value, val: n });
+  };
+  const itemRow = document.createElement("div");
+  itemRow.className = "condrow";
+  itemRow.append("Only with", cmp, val, item, addItem);
+  const others = st.orders.filter((x) => x.id !== o.id);
+  if (!others.length) return [itemRow];
+  const other = selectOf(others.map((x) => ({ id: x.id, label: x.label + (x.material ? ` (${x.material})` : "") })));
+  other.className = "addcondorder";
+  const when = selectOf(catalog.cond_whens || []);
+  when.className = "addcondwhen";
+  const addOrder = button("addcondafter");
+  addOrder.onclick = () => send({ type: "add_condition", order: o.id, after: parseInt(other.value, 10), when: when.value });
+  const orderRow = document.createElement("div");
+  orderRow.className = "condrow";
+  orderRow.append("After", other, "is", when, addOrder);
+  return [itemRow, orderRow];
 }
 
 function renderOrders() {
@@ -1394,9 +1667,24 @@ function squadEditor(q) {
   if (q.orders.length) {
     const orders = document.createElement("div");
     orders.className = "count";
-    orders.textContent = `Orders: ${q.orders.join(", ").toLowerCase().replaceAll("_", " ")}`;
+    orders.textContent = `Orders: ${q.orders.join(", ").toLowerCase().replaceAll("_", " ").replaceAll("move", "station")}`;
     box.append(orders);
   }
+  if (q.station) {
+    const go = document.createElement("button");
+    go.className = "squadgo";
+    go.textContent = `Stationed at ${q.station.x}, ${q.station.y}, z${q.station.z}`;
+    go.title = "Show this spot on the map";
+    go.onclick = () => { st.z = q.station.z; st.camX = q.station.x; st.camY = q.station.y; st.dirty = true; sendView(true); };
+    box.append(go);
+  }
+  if (q.kill) {
+    const kill = document.createElement("div");
+    kill.className = "count";
+    kill.textContent = `Hunting ${q.kill} ${q.kill === 1 ? "target" : "targets"}`;
+    box.append(kill);
+  }
+  if (manage && st.canSquadOrders) box.append(squadOrderControls(q));
   for (const m of q.members) {
     const row = document.createElement("div");
     row.className = "member";
@@ -1458,6 +1746,69 @@ function squadEditor(q) {
   return box;
 }
 
+function squadOrderControls(q) {
+  const wrap = document.createElement("div");
+  wrap.className = "squadorders";
+  const row = document.createElement("div");
+  row.className = "row";
+  const station = document.createElement("button");
+  station.className = "squadstation";
+  station.textContent = "Station";
+  station.title = "Pick a tile on the map for the squad to stand on";
+  station.onclick = () => {
+    setMode("station");
+    if (st.mode !== "station") return;
+    st.stationSquad = q.id;
+    $("side").classList.remove("open");
+  };
+  row.append(station);
+  if (q.station || q.kill) {
+    const cancel = document.createElement("button");
+    cancel.className = "squadclear";
+    cancel.textContent = "Cancel orders";
+    cancel.onclick = () => send({ type: "squad_clear", squad: q.id });
+    row.append(cancel);
+  }
+  wrap.append(row);
+  const targets = st.squadTargets;
+  const killRow = document.createElement("div");
+  killRow.className = "row";
+  if (!targets || !targets.length) {
+    const note = document.createElement("span");
+    note.className = "count";
+    note.textContent = !targets ? "Looking for enemies" : "No enemies in sight";
+    const look = document.createElement("button");
+    look.className = "squadlook";
+    look.textContent = "Look again";
+    look.onclick = () => send({ type: "squad_targets" });
+    killRow.append(note, look);
+  } else {
+    const pick = document.createElement("select");
+    pick.className = "squadtarget";
+    pick.setAttribute("aria-label", "Enemy to kill");
+    const all = document.createElement("option");
+    all.value = "all";
+    all.textContent = `All ${targets.length} in sight`;
+    pick.append(all);
+    for (const u of targets) {
+      const opt = document.createElement("option");
+      opt.value = u.id;
+      opt.textContent = u.name;
+      pick.append(opt);
+    }
+    const kill = document.createElement("button");
+    kill.className = "squadkill";
+    kill.textContent = "Kill";
+    kill.onclick = () => {
+      const units = pick.value === "all" ? targets.map((u) => u.id) : [parseInt(pick.value, 10)];
+      send({ type: "squad_kill", squad: q.id, units });
+    };
+    killRow.append(pick, kill);
+  }
+  wrap.append(killRow);
+  return wrap;
+}
+
 function renderSquads() {
   const box = $("squads");
   if (box.contains(document.activeElement) && ["INPUT", "SELECT"].includes(document.activeElement.tagName)) {
@@ -1488,6 +1839,7 @@ function renderSquads() {
       if (st.squadOpen !== null && can("military")) {
         st.squadCandidates = null;
         send({ type: "squad_candidates" });
+        if (st.canSquadOrders) { st.squadTargets = null; send({ type: "squad_targets" }); }
       }
       renderSquads();
     };
@@ -1503,6 +1855,665 @@ function renderSquads() {
 
 $("squads").addEventListener("focusout", () => {
   setTimeout(() => { if (st.squadsStale) renderSquads(); }, 0);
+});
+
+// -- stockpiles and zones --
+
+function isPlace(b) {
+  const what = `${b.kind || ""} ${b.name || ""}`;
+  return /civzone|stockpile/i.test(what) || (st.canWorkshops && /^(workshop|furnace)$/i.test(b.kind || ""))
+    || (st.canFarms && /^farmplot$/i.test(b.kind || ""));
+}
+
+// Zones overlap, so clicking the same tile again moves on to the next one there.
+function inspectPlaceAtCursor() {
+  if (!st.canPlaces || !st.cursor) return;
+  const { x, y } = st.cursor, z = st.z;
+  const here = st.buildings.filter((b) => isPlace(b) && x >= b.x1 && x <= b.x2 && y >= b.y1 && y <= b.y2
+                                          && z >= b.z1 && z <= b.z2);
+  if (!here.length) return;
+  const key = `${x},${y},${z}`;
+  const last = st.placeClick && st.placeClick.key === key ? st.placeClick.index : -1;
+  const index = (last + 1) % here.length;
+  st.placeClick = { key, index };
+  st.placeOpenSide = true;
+  send({ type: "inspect_place", id: here[index].i, x, y, z });
+}
+
+function placeLine(box, text, className) {
+  const d = document.createElement("div");
+  if (className) d.className = className;
+  d.textContent = text;
+  box.append(d);
+  return d;
+}
+
+function renderPlace() {
+  const box = $("placeinfo");
+  if (box.contains(document.activeElement) && ["INPUT", "SELECT"].includes(document.activeElement.tagName)
+      && document.activeElement.type !== "checkbox") {
+    st.placeStale = true;
+    return;
+  }
+  st.placeStale = false;
+  box.textContent = "";
+  const p = st.place;
+  if (!p) {
+    const note = document.createElement("span");
+    note.className = "count";
+    note.textContent = !st.canPlaces ? "not available on this host yet"
+      : st.canFarms ? "click a stockpile, zone, workshop or farm plot to see it"
+      : st.canWorkshops ? "click a stockpile, zone or workshop to see it" : "click a stockpile or zone to see it";
+    box.append(note);
+    return;
+  }
+  const panel = document.createElement("div");
+  panel.className = "placebox";
+  if (p.kind === "workshop" || p.kind === "farm") {
+    if (p.kind === "workshop") renderWorkshop(panel, p, can("order"));
+    else renderFarm(panel, p, can("build"));
+    box.append(panel);
+    return;
+  }
+  const edit = can("build");
+  const kindName = p.kind === "stockpile" ? "Stockpile" : humanizeZone(p.zone);
+  placeLine(panel, p.name || `${kindName} #${p.number}`, "place-title");
+  placeLine(panel, `${p.name ? `${kindName} #${p.number} · ` : ""}${p.tiles} tiles · z${p.z}`, "count");
+  if (p.kind === "stockpile") renderStockpile(panel, p, edit);
+  else renderZone(panel, p, edit);
+  if (edit) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const input = document.createElement("input");
+    input.className = "placename";
+    input.maxLength = 40;
+    input.placeholder = "Custom name";
+    input.setAttribute("aria-label", "Custom name");
+    input.value = p.name;
+    const save = document.createElement("button");
+    save.className = "placesave";
+    save.textContent = "Rename";
+    save.onclick = () => send({ type: "rename_place", id: p.id, name: input.value });
+    input.onkeydown = (e) => { if (e.key === "Enter") save.click(); };
+    row.append(input, save);
+    panel.append(row);
+  }
+  box.append(panel);
+}
+
+// -- farm plots: a crop for each season --
+
+const SEASON_NAMES = ["Spring", "Summer", "Autumn", "Winter"];
+
+function renderFarm(panel, p, edit) {
+  placeLine(panel, p.name || "Farm plot", "place-title");
+  placeLine(panel, `${p.name ? "Farm plot · " : ""}${p.tiles} tiles · ${p.underground ? "underground" : "above ground"}`
+    + ` · z${p.z}`, "count");
+  if (p.autofarm)
+    placeLine(panel, "DFHack's autofarm is on: it picks crops for every plot by stock levels and will "
+      + "replace choices made here. The host can turn it off with \"disable autofarm\".", "warn");
+  const grid = document.createElement("div");
+  grid.className = "farmseasons";
+  p.crops.forEach((crop, season) => {
+    const label = document.createElement("label");
+    label.className = "farmseason";
+    const name = document.createElement("span");
+    name.textContent = SEASON_NAMES[season] + (season === p.season ? " (now)" : "");
+    if (season === p.season) name.className = "now";
+    label.append(name);
+    if (!edit) {
+      const v = document.createElement("span");
+      v.textContent = crop.id >= 0 ? crop.name : "fallow";
+      label.append(v);
+    } else {
+      const pick = document.createElement("select");
+      pick.className = "farmcrop";
+      pick.dataset.season = season;
+      pick.setAttribute("aria-label", `${SEASON_NAMES[season]} crop`);
+      const choices = [{ id: -1, name: "fallow", seeds: null }, ...p.options[season]];
+      if (crop.id >= 0 && !choices.some((o) => o.id === crop.id)) choices.push({ id: crop.id, name: crop.name, seeds: null });
+      for (const o of choices) {
+        const opt = document.createElement("option");
+        opt.value = o.id;
+        opt.textContent = o.seeds === null ? o.name : `${o.name} (${o.seeds ? `${o.seeds} seeds` : "no seeds"})`;
+        pick.append(opt);
+      }
+      pick.value = String(crop.id);
+      pick.onchange = () => {
+        send({ type: "farm_crop", id: p.id, season, plant: parseInt(pick.value, 10) });
+        pick.blur();
+      };
+      label.append(pick);
+    }
+    grid.append(label);
+  });
+  panel.append(grid);
+  const fert = document.createElement("label");
+  fert.className = "farmfert";
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = p.fertilize;
+  box.disabled = !edit;
+  box.onchange = () => send({ type: "farm_fertilize", id: p.id, on: box.checked });
+  fert.append(box, "Fertilize each season");
+  panel.append(fert);
+}
+
+// -- workshops: their tasks and one assigned worker --
+
+const JOB_BUTTONS = [
+  ["suspend", "Suspend", (j) => !j.suspended], ["resume", "Resume", (j) => j.suspended],
+  ["now", "Do now", (j) => !j.now], ["notnow", "Not first", (j) => j.now],
+  ["repeat", "Repeat", (j) => !j.repeat], ["once", "Just once", (j) => j.repeat],
+  ["cancel", "Cancel", () => true],
+];
+
+// Dwarves take and finish tasks all the time, so an open workshop is asked about again.
+const WORKSHOP_REFRESH_MS = 5000;
+setInterval(() => {
+  const p = st.place;
+  if (p && p.kind === "workshop" && !document.hidden)
+    send({ type: "inspect_place", id: p.id, x: p.x, y: p.y, z: p.z });
+}, WORKSHOP_REFRESH_MS);
+
+function jobStatus(j) {
+  const parts = [];
+  if (j.suspended) parts.push("suspended");
+  else parts.push(j.worker ? `${j.worker} working` : "waiting for a worker");
+  if (j.now) parts.push("do now");
+  if (j.repeat) parts.push("repeats");
+  if (j.order >= 0) parts.push(`order #${j.order}`);
+  return parts.join(" · ");
+}
+
+function renderWorkshop(panel, p, edit) {
+  placeLine(panel, p.custom || p.name, "place-title");
+  placeLine(panel, `${p.custom ? `${p.name} · ` : ""}${p.built ? "" : "not built yet · "}`
+    + `${p.jobs.length} task${p.jobs.length === 1 ? "" : "s"} · z${p.z}`, "count");
+  const jobs = document.createElement("div");
+  jobs.className = "jobs";
+  for (const j of p.jobs) {
+    const row = document.createElement("div");
+    row.className = `job${j.suspended ? " suspended" : ""}`;
+    placeLine(row, j.name, "jobname");
+    placeLine(row, j.building ? (p.built ? "being taken down" : "being built") : jobStatus(j), "count");
+    if (edit && !j.building) {
+      const btns = document.createElement("div");
+      btns.className = "jobbtns";
+      for (const [action, text, show] of JOB_BUTTONS) {
+        if (!show(j)) continue;
+        const b = document.createElement("button");
+        b.textContent = text;
+        b.dataset.action = action;
+        b.onclick = () => {
+          if (action === "cancel" && !confirm(`Cancel "${j.name}"?`)) return;
+          send({ type: "workshop_job", id: p.id, job: j.id, action });
+        };
+        btns.append(b);
+      }
+      row.append(btns);
+    }
+    jobs.append(row);
+  }
+  if (!p.jobs.length) placeLine(jobs, "No tasks here", "count");
+  panel.append(jobs);
+  placeLine(panel, `Takes up to ${p.general_orders} general work order${p.general_orders === 1 ? "" : "s"}`
+    + (p.orders_here ? ` · ${p.orders_here} order${p.orders_here === 1 ? "" : "s"} tied here` : ""), "count");
+  renderWorkshopWorker(panel, p, edit);
+}
+
+function renderWorkshopWorker(panel, p, edit) {
+  const who = p.workers[0];
+  placeLine(panel, who ? `Only ${who.name} works here` : "Anyone may work here", who ? "" : "count");
+  if (!edit) return;
+  if (!st.zoneCandidates) {
+    st.zoneCandidates = [];
+    send({ type: "zone_candidates" });
+  }
+  const adults = st.zoneCandidates.filter((u) => u.adult !== false);
+  const row = document.createElement("div");
+  row.className = "row";
+  const pick = document.createElement("select");
+  pick.className = "workerpick";
+  pick.setAttribute("aria-label", "Dwarf to assign");
+  for (const u of adults) {
+    const opt = document.createElement("option");
+    opt.value = u.id;
+    opt.textContent = u.name;
+    pick.append(opt);
+  }
+  pick.disabled = !adults.length;
+  const assign = document.createElement("button");
+  assign.className = "workerassign";
+  assign.textContent = "Assign";
+  assign.disabled = pick.disabled;
+  assign.onclick = () => send({ type: "workshop_worker", id: p.id, unit: parseInt(pick.value, 10) });
+  row.append(pick, assign);
+  panel.append(row);
+  if (who) {
+    const free = document.createElement("button");
+    free.className = "workerfree";
+    free.textContent = "Let anyone work here";
+    free.onclick = () => send({ type: "workshop_worker", id: p.id });
+    panel.append(free);
+  }
+}
+
+function humanizeZone(zone) {
+  return (zone || "Zone").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/ ([A-Z])/g, (_, c) => ` ${c.toLowerCase()}`);
+}
+
+function renderStockpile(panel, p, edit) {
+  const cats = document.createElement("div");
+  cats.className = "cats";
+  for (const c of st.stockCategories) {
+    const label = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.dataset.category = c.id;
+    box.checked = p.categories.includes(c.id);
+    box.disabled = !edit;
+    box.onchange = () => {
+      if (!box.checked && !confirm(`Stop storing all ${c.label.toLowerCase()} here? Any finer choices within it are lost.`)) {
+        box.checked = true;
+        return;
+      }
+      send({ type: "stockpile_category", id: p.id, category: c.id, on: box.checked });
+    };
+    label.append(box, c.label);
+    cats.append(label);
+  }
+  panel.append(cats);
+  const limits = document.createElement("div");
+  limits.className = "limits";
+  const fields = {};
+  for (const [key, text] of [["barrels", "Barrels"], ["bins", "Bins"], ["wheelbarrows", "Barrows"]]) {
+    const label = document.createElement("label");
+    label.textContent = text;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = 0;
+    input.max = p.tiles;
+    input.value = p[key];
+    input.disabled = !edit;
+    input.dataset.limit = key;
+    fields[key] = input;
+    label.append(input);
+    limits.append(label);
+  }
+  panel.append(limits);
+  if (!edit) return;
+  const save = document.createElement("button");
+  save.className = "limitsave";
+  save.textContent = "Save limits";
+  save.onclick = () => {
+    const out = { type: "stockpile_containers", id: p.id };
+    for (const key of Object.keys(fields)) {
+      const n = parseInt(fields[key].value, 10);
+      if (!(n >= 0 && n <= p.tiles)) { toast(`This stockpile fits 0 to ${p.tiles}`, true); return; }
+      out[key] = n;
+    }
+    send(out);
+  };
+  panel.append(save);
+}
+
+function renderZone(panel, p, edit) {
+  placeLine(panel, p.active ? "Active" : "Inactive: dwarves ignore it", "count");
+  if (edit) {
+    const toggle = document.createElement("button");
+    toggle.className = "zoneactive";
+    toggle.textContent = p.active ? "Make inactive" : "Make active";
+    toggle.onclick = () => send({ type: "zone_active", id: p.id, on: !p.active });
+    panel.append(toggle);
+  }
+  if (!p.ownable) return;
+  placeLine(panel, p.owner ? `Owner: ${p.owner}` : "Nobody owns this room", p.owner ? "" : "count");
+  if (!edit) return;
+  if (!st.zoneCandidates) {
+    st.zoneCandidates = [];
+    send({ type: "zone_candidates" });
+  }
+  const row = document.createElement("div");
+  row.className = "row";
+  const pick = document.createElement("select");
+  pick.className = "zonepick";
+  pick.setAttribute("aria-label", "Dwarf to assign");
+  for (const u of st.zoneCandidates) {
+    const opt = document.createElement("option");
+    opt.value = u.id;
+    opt.textContent = u.name;
+    pick.append(opt);
+  }
+  pick.disabled = !st.zoneCandidates.length;
+  const assign = document.createElement("button");
+  assign.className = "zoneassign";
+  assign.textContent = "Assign";
+  assign.disabled = pick.disabled;
+  assign.onclick = () => send({ type: "zone_owner", id: p.id, unit: parseInt(pick.value, 10) });
+  row.append(pick, assign);
+  panel.append(row);
+  if (p.owner) {
+    const free = document.createElement("button");
+    free.className = "zonefree";
+    free.textContent = "Free this room";
+    free.onclick = () => send({ type: "zone_owner", id: p.id });
+    panel.append(free);
+  }
+}
+
+$("placeinfo").addEventListener("focusout", () => {
+  setTimeout(() => { if (st.placeStale) renderPlace(); }, 0);
+});
+
+// -- citizens --
+
+const CITIZEN_REFRESH_MS = 5000;
+const INSPECT_WAIT_MS = 3000;
+const UNHAPPY = 2;   // stress categories 0 to 2 read as unhappy
+
+function askCitizens() {
+  if (st.canCitizens && !document.hidden) send({ type: "citizens" });
+}
+
+// DF is only asked while this panel is open, and not while the tab is hidden.
+function showCitizens(open) {
+  st.citizensOpen = open;
+  $("citizens").hidden = !open;
+  $("citizentools").hidden = !open;
+  $("citizenstoggle").textContent = open ? "Hide" : "Show";
+  clearInterval(st.citizenTimer);
+  st.citizenTimer = null;
+  if (!open) return;
+  renderCitizens();
+  askCitizens();
+  st.citizenTimer = setInterval(askCitizens, CITIZEN_REFRESH_MS);
+}
+
+function citizenMatches(c, words) {
+  const text = `${c.name} ${c.profession} ${c.job} ${c.squad} ${c.mood}`.toLowerCase();
+  return words.every((w) => text.includes(w));
+}
+
+function citizenOrder(sort) {
+  // Nicknames start with a backtick; sort on the letters.
+  const letters = (c) => c.name.replace(/^[^\p{L}]+/u, "");
+  const byName = (a, b) => letters(a).localeCompare(letters(b));
+  if (sort === "idle") return (a, b) => Boolean(a.job) - Boolean(b.job) || byName(a, b);
+  // No mood (babies have no soul to read) sorts last.
+  const rank = (c) => (c.stress < 0 ? 99 : c.stress);
+  if (sort === "mood") return (a, b) => rank(a) - rank(b) || byName(a, b);
+  return byName;
+}
+
+function renderCitizens() {
+  const box = $("citizens");
+  if (box.hidden) return;
+  const scroll = box.scrollTop;
+  box.textContent = "";
+  const note = (text) => {
+    const n = document.createElement("div");
+    n.className = "count";
+    n.textContent = text;
+    box.append(n);
+  };
+  if (!st.canCitizens) return note("not available on this host yet");
+  if (!st.citizens) return note("Looking for everyone…");
+  const idle = st.citizens.filter((c) => !c.job).length;
+  const unhappy = st.citizens.filter((c) => c.stress >= 0 && c.stress <= UNHAPPY).length;
+  note(`${st.citizens.length} citizens · ${idle} idle · ${unhappy} unhappy`);
+  const words = $("citizenfilter").value.toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = st.citizens.filter((c) => citizenMatches(c, words)).sort(citizenOrder($("citizensort").value));
+  if (!shown.length) note("Nobody matches that");
+  for (const c of shown) box.append(citizenRow(c));
+  box.scrollTop = scroll;
+}
+
+function citizenRow(c) {
+  const row = document.createElement("button");
+  row.className = "citizen";
+  row.dataset.unit = c.id;
+  const known = c.x !== undefined;
+  if (!known) row.classList.add("away");
+  row.title = known ? `Go to ${c.name}` : `${c.name} is somewhere unexplored`;
+  const name = document.createElement("span");
+  name.className = "cname";
+  name.textContent = c.name.split(",")[0];
+  const mood = document.createElement("span");
+  mood.className = "cmood";
+  mood.classList.toggle("bad", c.stress >= 0 && c.stress <= UNHAPPY);
+  mood.textContent = c.mood;
+  const job = document.createElement("span");
+  job.className = "cjob";
+  job.textContent = [c.profession, c.job || "No job", c.squad].filter(Boolean).join(" · ");
+  row.append(name, mood, job);
+  row.onclick = () => goToCitizen(c);
+  return row;
+}
+
+function goToCitizen(c) {
+  if (c.x === undefined) { toast(`${c.name.split(",")[0]} is somewhere unexplored`, true); return; }
+  st.z = c.z;
+  st.camX = c.x;
+  st.camY = c.y;
+  st.cursor = { x: c.x, y: c.y };
+  st.dirty = true;
+  $("side").classList.remove("open");
+  sendView(true);
+  // Their level may not have arrived yet; inspect once the hub shows them.
+  st.pendingInspect = { id: c.id, until: performance.now() + INSPECT_WAIT_MS };
+  inspectPending();
+}
+
+function inspectPending() {
+  const wait = st.pendingInspect;
+  if (!wait) return;
+  if (performance.now() > wait.until) { st.pendingInspect = null; return; }
+  if (st.canInspect && st.units.some((u) => u.i === wait.id)) {
+    st.pendingInspect = null;
+    send({ type: "inspect", unit: wait.id });
+  }
+}
+
+$("citizenstoggle").onclick = () => showCitizens(!st.citizensOpen);
+$("citizenfilter").addEventListener("input", renderCitizens);
+$("citizensort").addEventListener("change", renderCitizens);
+
+// -- stocks --
+
+// The hub counts DF at most once a minute for everyone, so asking more often gains nothing.
+const STOCK_REFRESH_MS = 60000;
+
+function askStocks() {
+  if (st.canStocks && !document.hidden) send({ type: "stocks" });
+}
+
+function showStocks(open) {
+  st.stocksOpen = open;
+  $("stocks").hidden = !open;
+  $("stockfilter").hidden = !open;
+  $("stockstoggle").textContent = open ? "Hide" : "Show";
+  clearInterval(st.stockTimer);
+  st.stockTimer = null;
+  if (!open) return;
+  renderStocks();
+  askStocks();
+  st.stockTimer = setInterval(askStocks, STOCK_REFRESH_MS);
+}
+
+function stockLine(className, name, count) {
+  const row = document.createElement(className === "stockrow" ? "div" : "summary");
+  if (className === "stockrow") row.className = className;
+  const n = document.createElement("span");
+  n.className = "sname";
+  n.textContent = name;
+  const c = document.createElement("span");
+  c.className = "scount";
+  c.textContent = count.toLocaleString();
+  row.append(n, c);
+  return row;
+}
+
+function renderStocks() {
+  const box = $("stocks");
+  box.textContent = "";
+  if (!st.canStocks) {
+    placeLine(box, "not available on this host yet", "count");
+    return;
+  }
+  if (!st.stocks) {
+    placeLine(box, "counting…", "count");
+    return;
+  }
+  st.stockOpenGroups = st.stockOpenGroups || new Set();
+  const words = $("stockfilter").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const matches = (name) => words.every((w) => name.toLowerCase().includes(w));
+  let shown = 0;
+  for (const g of st.stocks) {
+    const rows = words.length ? g.rows.filter((r) => matches(r.name)) : g.rows;
+    if (!rows.length) continue;
+    shown += rows.length;
+    const group = document.createElement("details");
+    group.className = "stockgroup";
+    group.dataset.group = g.name;
+    group.open = words.length > 0 || st.stockOpenGroups.has(g.name);
+    group.ontoggle = () => {
+      if (words.length) return;
+      if (group.open) st.stockOpenGroups.add(g.name); else st.stockOpenGroups.delete(g.name);
+    };
+    const total = words.length ? rows.reduce((n, r) => n + r.count, 0) : g.total;
+    group.append(stockLine("", g.name, total));
+    for (const r of rows) group.append(stockLine("stockrow", r.name, r.count));
+    box.append(group);
+  }
+  if (!shown) placeLine(box, words.length ? "nothing matches" : "nothing in stock", "count");
+  const age = Math.round((st.stocksAge || 0) + (Date.now() - (st.stocksAt || Date.now())) / 1000);
+  placeLine(box, `Counted ${age < 5 ? "just now" : `${age} s ago`}. Leaves out traders' goods, webs, `
+    + "anything built in or carried by outsiders, and unexplored places.", "count");
+}
+
+$("stockstoggle").onclick = () => showStocks(!st.stocksOpen);
+$("stockfilter").addEventListener("input", renderStocks);
+
+// -- work details --
+
+function askDetails() {
+  if (st.canWorkDetails && !document.hidden) send({ type: "work_details" });
+}
+
+function showDetails(open) {
+  st.detailsOpen = open;
+  $("details").hidden = !open;
+  $("detailfilter").hidden = !open || st.detailOpen === null;
+  $("detailstoggle").textContent = open ? "Hide" : "Show";
+  clearInterval(st.detailTimer);
+  st.detailTimer = null;
+  if (!open) return;
+  renderDetails();
+  askDetails();
+  st.detailTimer = setInterval(askDetails, CITIZEN_REFRESH_MS);
+}
+
+function detailPicker(d) {
+  const editable = can("labor");
+  const box = document.createElement("div");
+  box.className = "detailedit";
+  const labors = document.createElement("div");
+  labors.textContent = d.labors.join(", ") || "No labors";
+  box.append(labors);
+  if (editable) {
+    const modes = st.detailModes.filter((m) => !(d.no_everybody && m.id === "EverybodyDoesThis"));
+    const mode = selectOf(modes, d.mode);
+    mode.className = "detailmode";
+    mode.setAttribute("aria-label", `Who does ${d.name}`);
+    mode.onchange = () => {
+      send({ type: "work_detail_mode", detail: d.i, name: d.name, mode: mode.value });
+      mode.blur();
+    };
+    box.append(mode);
+  }
+  if (d.mode !== "OnlySelectedDoesThis") {
+    const note = document.createElement("div");
+    note.textContent = `${(st.detailModes.find((m) => m.id === d.mode) || { label: d.mode }).label} does this`;
+    box.append(note);
+    return box;
+  }
+  const members = new Set(d.members);
+  const words = $("detailfilter").value.toLowerCase().split(/\s+/).filter(Boolean);
+  const people = st.detailPeople
+    .filter((p) => words.every((w) => p.name.toLowerCase().includes(w)))
+    .sort((a, b) => members.has(b.id) - members.has(a.id));
+  for (const p of people) {
+    const row = document.createElement("label");
+    row.className = "detailperson";
+    row.title = p.name;
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.checked = members.has(p.id);
+    check.disabled = !editable;
+    check.dataset.unit = p.id;
+    check.onchange = () => {
+      send({ type: "work_detail_member", detail: d.i, name: d.name, unit: p.id, on: check.checked });
+      check.blur();
+    };
+    const name = document.createElement("span");
+    name.textContent = p.name.split(",")[0];
+    row.append(check, name);
+    box.append(row);
+  }
+  return box;
+}
+
+function renderDetails() {
+  const box = $("details");
+  if (box.hidden) return;
+  // A menu or tick box in use isn't pulled away by a refresh; leaving it catches up.
+  if (box.contains(document.activeElement) && ["INPUT", "SELECT"].includes(document.activeElement.tagName)) {
+    st.detailsStale = true;
+    return;
+  }
+  st.detailsStale = false;
+  const scroll = box.scrollTop;
+  box.textContent = "";
+  const note = (text) => {
+    const n = document.createElement("div");
+    n.className = "count";
+    n.textContent = text;
+    box.append(n);
+  };
+  if (!st.canWorkDetails) return note("not available on this host yet");
+  if (!st.details) return note("Looking…");
+  $("detailfilter").hidden = st.detailOpen === null;
+  for (const d of st.details) {
+    const row = document.createElement("div");
+    row.className = "detail";
+    row.dataset.detail = d.i;
+    const name = document.createElement("button");
+    name.className = "name";
+    name.textContent = d.name;
+    name.onclick = () => {
+      st.detailOpen = st.detailOpen === d.i ? null : d.i;
+      $("detailfilter").value = "";
+      renderDetails();
+    };
+    const who = document.createElement("span");
+    const picking = d.mode === "OnlySelectedDoesThis";
+    who.className = "who";
+    who.classList.toggle("none", picking && !d.members.length);
+    who.textContent = picking ? `${d.members.length}`
+      : { EverybodyDoesThis: "all", NobodyDoesThis: "none" }[d.mode] || d.mode;
+    who.title = picking ? `${d.members.length} living members` : "";
+    row.append(name, who);
+    box.append(row);
+    if (st.detailOpen === d.i) box.append(detailPicker(d));
+  }
+  box.scrollTop = scroll;
+}
+
+$("detailstoggle").onclick = () => showDetails(!st.detailsOpen);
+$("detailfilter").addEventListener("input", renderDetails);
+$("details").addEventListener("focusout", () => {
+  setTimeout(() => { if (st.detailsStale) renderDetails(); }, 0);
 });
 
 // -- nobles --
@@ -1702,6 +2713,7 @@ function applyPerms() {
   renderOrders();
   renderSquads();
   renderNobles();
+  renderPlace();
   renderPause();
 }
 
@@ -1742,6 +2754,55 @@ function toast(text, bad) {
   toastTimer = setTimeout(() => { el.className = bad ? "bad" : ""; }, 3500);
 }
 
+// -- side panel width --
+
+const SIDE_DEFAULT = 240, SIDE_MIN = 200;
+
+function sideMax() { return Math.max(SIDE_MIN, Math.min(720, Math.floor(window.innerWidth * 0.7))); }
+
+function setSideWidth(width, remember) {
+  const w = Math.max(SIDE_MIN, Math.min(sideMax(), Math.round(width)));
+  document.documentElement.style.setProperty("--side-width", `${w}px`);
+  st.sideWidth = w;
+  $("sidedrag").setAttribute("aria-valuenow", w);
+  resize();
+  if (remember) {
+    try { localStorage.setItem("df-coop-side-width", String(w)); } catch (error) {}
+  }
+}
+
+function setupSideDrag() {
+  const handle = $("sidedrag");
+  handle.setAttribute("aria-valuemin", SIDE_MIN);
+  handle.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add("dragging");
+  });
+  handle.addEventListener("pointermove", (e) => {
+    if (handle.classList.contains("dragging")) setSideWidth(window.innerWidth - e.clientX, false);
+  });
+  const finish = () => {
+    if (!handle.classList.contains("dragging")) return;
+    handle.classList.remove("dragging");
+    setSideWidth(st.sideWidth, true);
+  };
+  handle.addEventListener("pointerup", finish);
+  handle.addEventListener("pointercancel", finish);
+  handle.addEventListener("dblclick", () => setSideWidth(SIDE_DEFAULT, true));
+  handle.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    e.stopPropagation();   // these keys pan the map otherwise
+    setSideWidth(st.sideWidth + (e.key === "ArrowLeft" ? 20 : -20), true);
+  });
+  let saved = NaN;
+  try { saved = parseInt(localStorage.getItem("df-coop-side-width"), 10); } catch (error) {}
+  setSideWidth(saved >= SIDE_MIN ? saved : SIDE_DEFAULT, false);
+}
+
+setupSideDrag();
+window.addEventListener("resize", () => setSideWidth(st.sideWidth, false));
 window.addEventListener("resize", resize);
 resize();
 loadGraphics();

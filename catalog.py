@@ -108,8 +108,26 @@ ORDER_FREQUENCIES = {"OneTime": "One time", "Daily": "Daily", "Monthly": "Monthl
                      "Seasonally": "Seasonally", "Yearly": "Yearly"}
 ORDER_MOVES = ("up", "down", "top", "bottom")
 
+# DF's stockpile categories (coop.lua's STOCK_CATEGORIES), in DF's menu order.
+STOCK_CATEGORIES = {"animals": "Animals", "food": "Food", "furniture": "Furniture", "corpses": "Corpses",
+                    "refuse": "Refuse", "stone": "Stone", "ammo": "Ammo", "coins": "Coins",
+                    "bars_blocks": "Bars and blocks", "gems": "Gems", "finished_goods": "Finished goods",
+                    "leather": "Leather", "cloth": "Cloth", "wood": "Wood", "weapons": "Weapons",
+                    "armor": "Armor", "sheet": "Sheets"}
+
 _COMPARE_WORDS = {"AtLeast": "at least", "AtMost": "at most", "GreaterThan": "more than",
                   "LessThan": "fewer than", "Exactly": "exactly", "Not": "not"}
+CONDITION_COMPARES = _COMPARE_WORDS
+CONDITION_WHENS = {"Completed": "completed", "Activated": "activated"}
+MAX_CONDITION_VALUE = 999999
+MAX_WORKSHOPS = 99
+# What a new item condition can count. Types DF's own conditions use on a real
+# fort; picking a material or subtype isn't offered.
+CONDITION_ITEMS = {"WOOD": "Logs", "BOULDER": "Stone", "BAR": "Bars", "BLOCKS": "Blocks", "ROUGH": "Rough gems",
+                   "SMALLGEM": "Cut gems", "PLANT": "Plants", "SEEDS": "Seeds", "DRINK": "Drink", "FOOD": "Prepared meals",
+                   "THREAD": "Thread", "CLOTH": "Cloth", "SKIN_TANNED": "Leather", "BED": "Beds", "DOOR": "Doors",
+                   "TABLE": "Tables", "CHAIR": "Chairs", "BARREL": "Barrels", "BIN": "Bins", "BOX": "Boxes",
+                   "BAG": "Bags", "BUCKET": "Buckets", "COFFIN": "Coffins", "CHAIN": "Chains", "TRAPPARTS": "Mechanisms"}
 
 
 @dataclass(frozen=True)
@@ -177,6 +195,81 @@ ORDER_GROUPS = list(dict.fromkeys(o.group for o in ORDERS))
 _ORDER_LABELS = {(o.job, o.reaction): o.label for o in ORDERS}
 
 
+# Stocks: each df.item_type under a heading, with a plural for when DF has no
+# subtype name. Types not listed fall under "Other" with their name humanized.
+STOCK_GROUPS = ["Raw materials", "Food and drink", "Furniture", "Tools and containers", "Weapons and armor",
+                "Clothing", "Crafts and art", "Remains", "Other"]
+_STOCK_ROWS = {
+    "Raw materials": {"WOOD": "logs", "BOULDER": "boulders", "BAR": "bars", "BLOCKS": "blocks", "ROUGH": "rough gems",
+                      "GEM": "cut gems", "SMALLGEM": "small cut gems", "SKIN_TANNED": "leather", "THREAD": "thread",
+                      "CLOTH": "cloth", "SHEET": "sheets", "POWDER_MISC": "powder",
+                      "LIQUID_MISC": "liquid", "ROCK": "rocks"},
+    "Food and drink": {"FOOD": "prepared meals", "DRINK": "drink", "MEAT": "meat", "FISH": "fish",
+                       "FISH_RAW": "raw fish", "CHEESE": "cheese", "EGG": "eggs", "PLANT": "plants",
+                       "PLANT_GROWTH": "plant growths", "SEEDS": "seeds", "GLOB": "fat and tallow", "VERMIN": "vermin", "PET": "pets"},
+    "Furniture": {"BED": "beds", "CHAIR": "chairs", "TABLE": "tables", "DOOR": "doors", "CABINET": "cabinets",
+                  "BOX": "chests", "COFFIN": "coffins", "STATUE": "statues", "SLAB": "slabs", "WINDOW": "windows",
+                  "HATCH_COVER": "hatch covers", "GRATE": "grates", "FLOODGATE": "floodgates",
+                  "ARMORSTAND": "armor stands", "WEAPONRACK": "weapon racks", "TRACTION_BENCH": "traction benches",
+                  "BOOKCASE": "bookcases", "PEDESTAL": "pedestals", "DISPLAY_CASE": "display cases",
+                  "MILLSTONE": "millstones", "QUERN": "querns", "ANVIL": "anvils", "CAGE": "cages",
+                  "CHAIN": "chains", "TRAPPARTS": "mechanisms", "TRAPCOMP": "trap parts", "SIEGEAMMO": "siege ammo",
+                  "BALLISTAPARTS": "ballista parts", "CATAPULTPARTS": "catapult parts", "PIPE_SECTION": "pipe sections"},
+    "Tools and containers": {"TOOL": "tools", "BARREL": "barrels", "BIN": "bins", "BAG": "bags",
+                             "BUCKET": "buckets", "FLASK": "flasks", "GOBLET": "goblets", "BACKPACK": "backpacks",
+                             "QUIVER": "quivers", "SPLINT": "splints", "CRUTCH": "crutches",
+                             "ANIMALTRAP": "animal traps", "BOOK": "books"},
+    "Weapons and armor": {"WEAPON": "weapons", "AMMO": "ammunition", "ARMOR": "armor", "HELM": "helms",
+                          "SHIELD": "shields"},
+    "Clothing": {"PANTS": "pants", "GLOVES": "gloves", "SHOES": "shoes"},
+    "Crafts and art": {"FIGURINE": "figurines", "AMULET": "amulets", "SCEPTER": "scepters", "CROWN": "crowns",
+                       "RING": "rings", "EARRING": "earrings", "BRACELET": "bracelets", "TOTEM": "totems",
+                       "INSTRUMENT": "instruments", "TOY": "toys", "COIN": "coins"},
+    "Remains": {"CORPSE": "corpses", "CORPSEPIECE": "body parts", "REMAINS": "remains"},
+}
+STOCK_TYPES: dict[str, tuple[str, str]] = {t: (group, label) for group, rows in _STOCK_ROWS.items()
+                                           for t, label in rows.items()}
+# DF's material name is already the whole name for these: "dwarven ale", "quarry bush
+# plant", "blueberry bush seed". The label only stands in when there's no material.
+MATERIAL_IS_NAME = {"DRINK", "PLANT", "PLANT_GROWTH", "SEEDS", "MEAT", "CHEESE", "GLOB", "LIQUID_MISC",
+                    "POWDER_MISC"}
+
+
+def stock_rows(items: list[dict]) -> list[dict]:
+    """coop.lua's stocks() as headings with totals, biggest first, and rows named by
+    material and kind: "granite blocks", "silver short swords"."""
+    groups: dict[str, dict] = {}
+    for it in items:
+        kind = it.get("type", "")
+        group, label = STOCK_TYPES.get(kind, ("Other", kind.replace("_", " ").lower()))
+        material = it.get("material", "")
+        if kind in MATERIAL_IS_NAME and material:
+            name = material
+        else:
+            name = " ".join(w for w in (material, it.get("what") or label) if w)
+        g = groups.setdefault(group, {"name": group, "total": 0, "rows": {}})
+        g["total"] += it.get("count", 0)
+        g["rows"][name] = g["rows"].get(name, 0) + it.get("count", 0)
+    out = []
+    for group in STOCK_GROUPS:
+        if group in groups:
+            g = groups[group]
+            rows = sorted(g["rows"].items(), key=lambda r: (-r[1], r[0]))
+            out.append({"name": group, "total": g["total"], "rows": [{"name": n, "count": c} for n, c in rows]})
+    return out
+
+
+# What a player can do to one task in a workshop (coop.lua's JOB_ACTIONS).
+WORKSHOP_JOB_ACTIONS = ("suspend", "resume", "now", "notnow", "repeat", "once", "cancel")
+WORK_DETAIL_MODES = {"OnlySelectedDoesThis": "Only those picked", "EverybodyDoesThis": "Everybody",
+                     "NobodyDoesThis": "Nobody"}
+
+
+def labor_label(token: str) -> str:
+    """"HAUL_STONE" -> "Haul stone"."""
+    return token.replace("_", " ").capitalize()
+
+
 def humanize(name: str) -> str:
     """"PrayOrMeditate" -> "Pray or meditate"."""
     words, word = [], ""
@@ -209,12 +302,17 @@ def condition_text(cond: dict, labels: dict) -> str:
         other = labels.get(cond["after"], f"order {cond['after']}")
         return f"after {other} is {_words(cond.get('when', '')) or 'done'}"
     compare = _COMPARE_WORDS.get(cond.get("cmp", ""), "")
+    return " ".join(str(p) for p in (compare, cond.get("val", ""), condition_what(cond)) if p != "")
+
+
+def condition_what(cond: dict) -> str:
+    """What an item condition counts, without the comparison or number."""
     what = [_words(flag) for flag in cond.get("flags") or []]
     for key in ("mat", "product", "class"):
         if cond.get(key):
             what.append(cond[key] if key == "mat" else _words(cond[key].removesuffix("_MAT")))
     what.append(cond.get("sub") or _words(cond.get("item") or "") or "items")
-    return " ".join(str(p) for p in (compare, cond.get("val", ""), *what) if p != "")
+    return " ".join(what)
 
 
 # dfhack.units.getStressCategory: 0 is the most stressed, 6 the least.

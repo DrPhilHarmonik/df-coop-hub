@@ -37,7 +37,7 @@ Players open a link, watch the fortress live, see each other's cursors, dig toge
 
 ## Experimental: back up your saves
 
-This reads and changes a live fortress through DFHack. The Nobles panel writes directly to DF's records, because DFHack has no call for appointing, and those changes are saved into the fort. Appointing has not yet been tested through a save and reload, so try it on a copy of a save first.
+This reads and changes a live fortress through DFHack. Several panels write directly to DF's records where DFHack has no call for the job: noble appointments, squad station and kill orders, work order conditions, work details (which also set each dwarf's labors), workshop tasks and farm crops. Those changes are saved into the fort. Each was tried on a disposable copy of a fort through game time, and most through a save and reload as well, but keep backups and try new features on a copy of a save first.
 
 ## Requirements
 
@@ -63,7 +63,7 @@ Open the printed link. Each friend needs their own `add-player NAME`, optionally
 | overseer (default) | everything |
 | builder | dig, build, remove, pause, chat |
 | miner | dig, pause, chat |
-| quartermaster | work orders, pause, chat |
+| quartermaster | work orders, work details, pause, chat |
 | commander | squads, pause, chat |
 | visitor | watch, chat and ping |
 
@@ -96,6 +96,7 @@ Keys follow Steam Dwarf Fortress's defaults (`data/init/interface.txt`), so DF p
 | `[` / `]`, Ctrl + wheel, pinch | zoom | `[` `]` |
 | `Space` | pause; resumes when everyone who paused is ready | pause |
 | `m`, then `m` `u` `t` `r` | dig, channel, stairs (`t` again: down, then up stairs), ramp | dig menu |
+| `m`, then `v` (`i`, `f`) | smooth (`v` again: engrave, then fortify) | dig menu |
 | `p` / `P` in the dig menu, or the − + buttons | designation priority: 1 is done first, 7 last (default 4) | same |
 | `x` | erase designations | same |
 | `b`, then DF's menu letters | build: the same pages and letters as DF's build menu, e.g. `b o f p` farm plot, `b p r` door, `b o u l` smelter | same |
@@ -114,13 +115,33 @@ Designations take two corners (clicks, taps, or `Enter` at each corner). Worksho
 
 Designations carry DF's priority (1 first, 7 last). Tiles show their number when it isn't the default 4, and the hover says who placed them and at what priority. Priority updates require in-game module v7: run `python3 hub.py install-lua` after upgrading. Older modules still allow default-priority digging, but do not receive priority updates; DF may retain an old priority on a re-designated tile.
 
+Smooth, engrave and fortify work the same way: drag a rectangle and DFHack's quickfort marks the tiles that qualify (rough natural stone to smooth, smooth floors and walls to engrave, smooth walls to fortify) at the priority you picked, and tells you how many it skipped. DF turns each mark into a job almost at once; the map shows them with a coloured outline (blue smooth, gold engrave, purple fortify) until the work is done, and Erase cancels them. Someone has to be on the Engravers work detail for the work to happen. These need in-game module v20.
+
 The hub only applies a designation where DF would accept it (rock for digging, floors for channels and down stairs, never constructions, trees or open air) and tells you how many tiles were skipped. Unexplored tiles take any designation, as in DF.
 
-The Work orders panel follows DF's manager queue. A dot shows each order's state (green active, grey checked by the manager, yellow waiting for the manager). Queue new orders once or on a repeat, move them with ▲ ▼, and click an order to see its conditions, change its amount or repeat, or send it to the top or bottom. Saving a new amount restarts the count. Conditions are read-only for now. Editing needs in-game module v8: run `python3 hub.py install-lua` after upgrading.
+The Citizens panel (`u`) lists everyone in the fort with their job, mood and squad, with a filter and sorting by unhappiest or idle. Click someone to go to them and open their details. DF is only asked while the panel is open. It needs in-game module v14: run `python3 hub.py install-lua` after upgrading.
+
+The Work details panel (`l`) shows who does what, counting only the living, and flags a detail nobody is on. Pick people with tick boxes, or set it to everybody or nobody. Dwarves can't be given two tool labors (mining, woodcutting, hunting). Changes take effect at once, without opening DF's screen. It needs in-game module v15.
+
+The Stocks panel (`k`) counts what the fort has by material and kind ("granite blocks", "silver short swords", "hen eggs") under headings such as raw materials and food, with a filter. Anyone can look. It is our own count, not DF's Stocks screen: it leaves out traders' goods, webs, items built into something or carried by outsiders, and anything in places nobody has explored. Counting holds DF for about half a second on a large fort, so the hub counts only while someone has the panel open, at most once a minute, and shares the count. It needs in-game module v17.
+
+The Work orders panel follows DF's manager queue. A dot shows each order's state (green active, grey checked by the manager, yellow waiting for the manager). Queue new orders once or on a repeat, move them with ▲ ▼, and click an order to change its amount or repeat, or send it to the top or bottom. Saving a new amount restarts the count. Editing needs in-game module v8: run `python3 hub.py install-lua` after upgrading.
+
+The same details change an order's conditions: edit the comparison and number on any item condition, remove any condition, add an item count ("at least 10 logs", by item type only), or make it wait until another order is activated or completed. Orders can't be set to wait for each other in a loop. You can also limit how many workshops work on an order at once. These need in-game module v13.
 
 The Squads panel (`q`) lists the fort's squads with their members, routine and orders. Click a squad to add an adult citizen to an open slot, remove a member, or give it a custom name (clear the box to restore the generated one). The leader (★) comes with a noble position and stays, and members away from the fort can't be removed. As in DF, leaving a squad goes on that dwarf's history. Creating squads and changing routines aren't here yet. Squads need in-game module v9.
 
+An open squad also takes orders. **Station** sends it to a tile you pick on the map, and **Kill** sends it after an enemy in sight, or all of them. Kill orders can only name enemies, never citizens or friends. A new order replaces the squad's current station or kill order, and **Cancel orders** sends it back to its routine. Orders need the `military` permission and in-game module v12.
+
 The Nobles panel (`n`) lists the fort's posts in order of rank, with who holds each, their duties and the rooms and furniture the post expects. Click a post to appoint someone, replace the holder, or remove them; one dwarf may hold several posts, as in DF. Posts that lead a squad, inherited titles and posts DF fills itself are shown but can't be changed here, and the panel says why. Each change goes on the fort's history, and only overseers may make them. Nobles need in-game module v10.
+
+Click a stockpile or zone on the map in Look mode to see it in the side panel; if several overlap, click again for the next. A stockpile lets you switch its categories on and off, set how many barrels, bins and wheelbarrows it may use, and name it. Switching a category uses DFHack's own presets, so it covers everything in that category and replaces any finer choices made in DF. A zone shows whether it's active, and bedrooms, offices, dining rooms and tombs can be assigned to a dwarf or freed. Builders and overseers can change these; everyone can look. These need in-game module v11.
+
+Click a workshop or furnace the same way to see its tasks: who is working on each, whether it's suspended, set to repeat or marked do now, and which work order it came from. Work order managers (quartermasters and overseers) can suspend, resume, prioritise, repeat or cancel a task, and assign one dwarf as the only one allowed to work there. The panel checks again every few seconds while it's open. New tasks still go through Work orders. This needs in-game module v16.
+
+Click a farm plot to pick its crop for each season, or leave it fallow. Only crops that grow there in that season are offered, by the same rule DFHack's autofarm uses, each with how many seeds the fort has; a crop with no seeds can be picked but nothing gets planted until seeds turn up. There is also DF's switch to fertilize each season. Builders and overseers can change these; everyone can look. If DFHack's autofarm is on, it picks crops for every plot itself and will replace choices made here or in DF; the panel says so, and the host can turn it off with `disable autofarm`. This needs in-game module v18.
+
+On a computer, drag the side panel's left edge to resize it, or double-click the edge to reset it. Your browser remembers the width.
 
 Every order is logged with the player's name in `~/.local/share/df-coop/<world>-<location>.actions.jsonl` (named after the fort's world and position, so DF's autosaves don't split it). Players who come back after five minutes or more get a "while you were away" summary: how much game time passed, what each other player did, and the announcements they missed.
 
@@ -142,14 +163,16 @@ Polling combines adjacent subscribed levels in groups of at most two, keeping fi
 |---|---|
 | `hub.py` | The hub: serves the client, authenticates players, polls the levels players are viewing, fans out changes |
 | `mapstate.py` | The hub's copy of the fortress; merges partial terrain updates, tracks item/flow snapshots and removes anything hidden |
+| `rpcstats.py` | Times the hub's calls to DF; the hub logs a summary once a minute |
 | `tiles.py` | Tiletype to glyph and colour |
 | `game_tiles.py` | Installed-game sprite discovery, building layouts, creature layers and allowlisted image pages |
 | `actions.py` | What can be dug where, roles, rate limiting, the action log, who designated what |
 | `away.py` | When each player left, and the summary of what they missed |
 | `catalog.py` | Everything players can build (quickfort keys) or order (job and reaction names); the game calendar |
 | `buildmenu.py` | DF's build menu (pages, letters, buildings), generated by `tools/gen_build_menu.py` |
+| `tools/bench.py` | A disposable second DF on its own folder, save, port and display, for scenarios that need real game time |
 | `tools/` | `watch_build_menu.py` captures DF's build menu while you browse it in DF; `gen_build_menu.py` turns that into `buildmenu.py` |
-| `lua/rpc/coop.lua` | The in-game module: places and removes buildings, stockpiles and zones (quickfort), sets designation priority, lists, queues, edits, reorders and cancels work orders, manages squad members and names, appoints nobles, reads announcements and creature details, reports the date |
+| `lua/rpc/coop.lua` | The in-game module: places and removes buildings, stockpiles and zones (quickfort), sets designation priority, lists, queues, edits, reorders and cancels work orders, manages squad members and names, appoints nobles, changes stockpile and zone settings, reads announcements and creature details, reports the date |
 | `static/` | The browser client (`index.html`, `client.js`), no build step |
 | `dfhack_rpc.py` | DFHack remote-protocol client: handshake, method binding, text and failure replies, RemoteFortressReader helpers, `run_lua` |
 | `proto/` | DFHack's `.proto` files and the generated `*_pb2.py`; `regen.sh` rebuilds them |

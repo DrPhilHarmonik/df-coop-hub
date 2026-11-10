@@ -31,6 +31,8 @@ DIG_KINDS = {
     "erase": rfr.NO_DIG,
 }
 DIG_NAMES = {v: k for k, v in DIG_KINDS.items()}
+# Smoothing and the like go through coop.lua (quickfort), not RFR's dig command.
+DETAIL_KINDS = ("smooth", "engrave", "fortify")
 
 MAX_DIG_TILES = 4096
 
@@ -79,13 +81,13 @@ def rect_tiles(x1: int, y1: int, x2: int, y2: int, width: int, height: int):
 # only greys out what a role can't use. Players without a role in the token
 # file are overseers, which is how everyone played before roles existed.
 
-PERMISSIONS = ("dig", "build", "remove", "order", "military", "nobles", "pause", "chat")
+PERMISSIONS = ("dig", "build", "remove", "order", "labor", "military", "nobles", "pause", "chat")
 
 ROLES: dict[str, frozenset[str]] = {
     "overseer": frozenset(PERMISSIONS),
     "builder": frozenset({"dig", "build", "remove", "pause", "chat"}),
     "miner": frozenset({"dig", "pause", "chat"}),
-    "quartermaster": frozenset({"order", "pause", "chat"}),
+    "quartermaster": frozenset({"order", "labor", "pause", "chat"}),
     "commander": frozenset({"military", "pause", "chat"}),
     "visitor": frozenset({"chat"}),
 }
@@ -94,11 +96,17 @@ DEFAULT_ROLE = "overseer"
 # message type -> the permission it needs (anything absent needs none)
 NEEDS = {"dig": "dig", "build": "build", "remove": "remove", "order": "order",
          "cancel_order": "order", "edit_order": "order", "move_order": "order",
+         "edit_condition": "order", "remove_condition": "order", "add_condition": "order",
+         "work_detail_member": "labor", "work_detail_mode": "labor",
+         "workshop_job": "order", "workshop_worker": "order", "farm_crop": "build", "farm_fertilize": "build",
          "squad_candidates": "military", "squad_add": "military", "squad_remove": "military",
-         "rename_squad": "military", "noble_candidates": "nobles", "appoint_noble": "nobles",
-         "vacate_noble": "nobles", "pause": "pause", "chat": "chat", "ping": "chat"}
+         "rename_squad": "military", "squad_station": "military", "squad_targets": "military",
+         "squad_kill": "military", "squad_clear": "military", "noble_candidates": "nobles", "appoint_noble": "nobles",
+         "vacate_noble": "nobles", "stockpile_category": "build", "stockpile_containers": "build",
+         "rename_place": "build", "zone_candidates": "build", "zone_owner": "build", "zone_active": "build",
+         "pause": "pause", "chat": "chat", "ping": "chat"}
 
-VERB = {"dig": "dig", "build": "build", "remove": "remove things", "order": "manage work orders",
+VERB = {"dig": "dig", "build": "build", "remove": "remove things", "order": "manage work orders", "labor": "change work details",
         "military": "manage squads", "nobles": "appoint nobles", "pause": "pause the game", "chat": "chat or ping"}
 
 

@@ -256,6 +256,265 @@ def test_order_panel_edits_moves_and_filters(browser_page, width):
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
+CITIZEN_FIXTURE = """() => {
+  st.canCitizens = true; st.canInspect = true;
+  window.sent = [];
+  send = (m) => window.sent.push(m);
+  window.people = [
+    {id: 1, name: "Asa, miner", profession: "Miner", job: "Dig", stress: 5, mood: "Happy", squad: "", x: 10, y: 11, z: 12},
+    {id: 2, name: "Bo", profession: "Peasant", job: "", stress: 0, mood: "Miserable", squad: "The Axes", x: 20, y: 21, z: 22},
+    {id: 3, name: "Cy", profession: "Baby", job: "", stress: -1, mood: "", squad: ""},
+  ];
+}"""
+
+
+def citizen_names(page):
+    return page.locator(".citizen .cname").all_inner_texts()
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_citizens_panel_lists_filters_sorts_and_goes_to_someone(browser_page, width):
+    page = browser_page
+    page.set_viewport_size({"width": width, "height": 800})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    serve_client(page)
+    page.evaluate(CITIZEN_FIXTURE)
+    assert page.evaluate("$('citizens').hidden")
+    assert page.evaluate("window.sent") == []        # DF isn't asked until it's opened
+
+    page.evaluate("$('citizenstoggle').click()")
+    assert page.evaluate("window.sent.pop()") == {"type": "citizens"}
+    assert "Looking" in page.locator("#citizens").inner_text()
+    page.evaluate("onMessage({type: 'citizens', ok: true, citizens: window.people})")
+    assert "3 citizens · 2 idle · 1 unhappy" in page.locator("#citizens").inner_text()
+    assert citizen_names(page) == ["Asa", "Bo", "Cy"]
+    assert page.locator(".citizen[data-unit='2'] .cmood.bad").count() == 1
+    assert "Peasant · No job · The Axes" in page.locator(".citizen[data-unit='2'] .cjob").inner_text()
+
+    page.evaluate("$('citizensort').value = 'mood'; renderCitizens()")
+    assert citizen_names(page) == ["Bo", "Asa", "Cy"]
+    page.evaluate("$('citizensort').value = 'idle'; renderCitizens()")
+    assert citizen_names(page) == ["Bo", "Cy", "Asa"]
+    page.evaluate("$('citizensort').value = 'name'; $('citizenfilter').value = 'axes'; renderCitizens()")
+    assert citizen_names(page) == ["Bo"]
+    page.evaluate("$('citizenfilter').value = 'nobody'; renderCitizens()")
+    assert "Nobody matches" in page.locator("#citizens").inner_text()
+    page.evaluate("$('citizenfilter').value = ''; renderCitizens(); window.sent.length = 0")
+
+    # someone not on this level yet: go there, then inspect when the hub shows them
+    page.evaluate("st.units = []; document.querySelector('.citizen[data-unit=\\'2\\']').click()")
+    assert page.evaluate("[st.z, st.camX, st.camY, st.cursor.x, st.cursor.y]") == [22, 20, 21, 20, 21]
+    assert page.evaluate("window.sent.filter(m => m.type === 'inspect')") == []
+    page.evaluate("onMessage({type: 'units', paused: false, units: [{i: 2, x: 20, y: 21, z: 22, n: 'Bo', c: '#fff'}]})")
+    assert page.evaluate("window.sent.filter(m => m.type === 'inspect')") == [{"type": "inspect", "unit": 2}]
+    page.evaluate("window.sent.length = 0; onMessage({type: 'units', paused: false, units: []})")
+    assert page.evaluate("window.sent") == []
+
+    # someone already in view is inspected at once
+    page.evaluate("st.units = [{i: 1, x: 10, y: 11, z: 12}]; document.querySelector('.citizen[data-unit=\\'1\\']').click()")
+    assert {"type": "inspect", "unit": 1} in page.evaluate("window.sent")
+
+    # someone on an unseen tile can't be gone to
+    z = page.evaluate("st.z")
+    page.evaluate("window.sent.length = 0; document.querySelector('.citizen[data-unit=\\'3\\']').click()")
+    assert page.evaluate("st.z") == z and page.evaluate("window.sent") == []
+    assert "unexplored" in page.locator("#toast").inner_text()
+
+    assert errors == []
+    assert page.evaluate("$('citizens').scrollWidth <= $('citizens').clientWidth")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_citizens_panel_refreshes_only_while_open_and_visible(browser_page):
+    page = browser_page
+    serve_client(page)
+    page.evaluate(CITIZEN_FIXTURE)
+    page.evaluate("window.keepInterval = setInterval; setInterval = (fn) => { window.tick = fn; return 1; }")
+    page.evaluate("showCitizens(true); window.sent.length = 0; window.tick()")
+    assert page.evaluate("window.sent") == [{"type": "citizens"}]
+    page.evaluate("""() => {
+      window.sent.length = 0;
+      Object.defineProperty(document, 'hidden', {value: true, configurable: true});
+      window.tick();
+    }""")
+    assert page.evaluate("window.sent") == []
+    page.evaluate("Object.defineProperty(document, 'hidden', {value: false, configurable: true})")
+    page.evaluate("showCitizens(false)")
+    assert page.evaluate("st.citizenTimer") is None and page.evaluate("$('citizens').hidden")
+    assert page.evaluate("$('citizenstoggle').textContent") == "Show"
+
+
+DETAIL_FIXTURE = """() => {
+  st.canWorkDetails = true;
+  st.perms = new Set(['labor']);
+  st.detailModes = [{id: 'OnlySelectedDoesThis', label: 'Only those picked'}, {id: 'EverybodyDoesThis', label: 'Everybody'},
+                    {id: 'NobodyDoesThis', label: 'Nobody'}];
+  window.sent = [];
+  send = (m) => window.sent.push(m);
+  window.detailMsg = {type: 'work_details', ok: true,
+    details: [{i: 0, name: 'Miners', mode: 'OnlySelectedDoesThis', no_everybody: true, labors: ['Mine'], members: [8]},
+              {i: 1, name: 'Woodcutters', mode: 'OnlySelectedDoesThis', no_everybody: true, labors: ['Cutwood'], members: []},
+              {i: 2, name: 'Haulers', mode: 'EverybodyDoesThis', no_everybody: false, labors: ['Haul stone', 'Haul wood'], members: []}],
+    people: [{id: 7, name: 'Asa, miner'}, {id: 8, name: 'Bo'}, {id: 9, name: 'Cy'}]};
+}"""
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_work_details_show_who_and_change_it(browser_page, width):
+    page = browser_page
+    page.set_viewport_size({"width": width, "height": 800})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    serve_client(page)
+    page.evaluate(DETAIL_FIXTURE)
+    assert page.evaluate("$('details').hidden") and page.evaluate("window.sent") == []
+
+    page.evaluate("$('detailstoggle').click()")
+    assert page.evaluate("window.sent.pop()") == {"type": "work_details"}
+    page.evaluate("onMessage(window.detailMsg)")
+    assert page.locator(".detail .name").all_inner_texts() == ["Miners", "Woodcutters", "Haulers"]
+    assert page.locator(".detail[data-detail='0'] .who").inner_text() == "1"
+    assert page.locator(".detail[data-detail='1'] .who.none").count() == 1       # nobody on it stands out
+    assert page.locator(".detail[data-detail='2'] .who").inner_text() == "all"
+
+    page.evaluate("document.querySelector('.detail[data-detail=\\'0\\'] .name').click()")
+    # members first; tool details can't be everybody
+    assert page.locator(".detailperson span").all_inner_texts() == ["Bo", "Asa", "Cy"]
+    assert page.locator(".detailmode option").evaluate_all("o => o.map(x => x.value)") == [
+        "OnlySelectedDoesThis", "NobodyDoesThis"]
+    assert page.locator(".detailperson input").first.is_checked()
+    page.evaluate("document.querySelector('.detailperson input[data-unit=\\'7\\']').click()")
+    assert page.evaluate("window.sent.pop()") == {"type": "work_detail_member", "detail": 0, "name": "Miners",
+                                                  "unit": 7, "on": True}
+    page.evaluate("document.querySelector('.detailperson input[data-unit=\\'8\\']').click()")
+    assert page.evaluate("window.sent.pop()") == {"type": "work_detail_member", "detail": 0, "name": "Miners",
+                                                  "unit": 8, "on": False}
+    page.evaluate("onMessage({type: 'work_detail_result', ok: false, error: 'they already use a tool'})")
+    assert "tool" in page.locator("#toast").inner_text()
+    assert page.evaluate("window.sent.pop()") == {"type": "work_details"}        # the truth comes back
+
+    page.evaluate("$('detailfilter').value = 'cy'; renderDetails()")
+    assert page.locator(".detailperson span").all_inner_texts() == ["Cy"]
+    page.evaluate("""() => {
+      const box = document.querySelector('.detailmode');
+      box.value = 'NobodyDoesThis'; box.onchange();
+    }""")
+    assert page.evaluate("window.sent.pop()") == {"type": "work_detail_mode", "detail": 0, "name": "Miners",
+                                                  "mode": "NobodyDoesThis"}
+
+    # everybody: no tick boxes, and the setting is offered
+    page.evaluate("document.querySelector('.detail[data-detail=\\'2\\'] .name').click()")
+    assert page.locator(".detailperson").count() == 0
+    assert "Everybody does this" in page.locator(".detailedit").inner_text()
+
+    # read-only for someone whose role can't change them
+    page.evaluate("st.perms = new Set(); document.querySelector('.detail[data-detail=\\'0\\'] .name').click()")
+    assert page.locator(".detailmode").count() == 0
+    assert page.locator(".detailperson input").first.is_disabled()
+    assert errors == []
+    assert page.evaluate("$('details').scrollWidth <= $('details').clientWidth")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_a_hidden_tab_tells_the_hub(browser_page):
+    page = browser_page
+    serve_client(page)
+    page.evaluate(ORDER_FIXTURE)
+    page.evaluate("""() => {
+      Object.defineProperty(document, 'hidden', {value: true, configurable: true});
+      document.dispatchEvent(new Event('visibilitychange'));
+      Object.defineProperty(document, 'hidden', {value: false, configurable: true});
+      document.dispatchEvent(new Event('visibilitychange'));
+    }""")
+    assert page.evaluate("window.sent") == [{"type": "visibility", "hidden": True},
+                                            {"type": "visibility", "hidden": False}]
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_order_conditions_can_be_changed_removed_and_added(browser_page, width):
+    page = browser_page
+    page.set_viewport_size({"width": width, "height": 800})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    serve_client(page)
+    page.evaluate(ORDER_FIXTURE)
+    page.evaluate("""() => {
+      st.canEditConditions = true;
+      Object.assign(st.orderCatalog, {
+        compares: [{id: 'AtLeast', label: 'at least'}, {id: 'LessThan', label: 'fewer than'}],
+        cond_items: [{id: 'BED', label: 'Beds'}, {id: 'DOOR', label: 'Doors'}],
+        cond_whens: [{id: 'Completed', label: 'completed'}, {id: 'Activated', label: 'activated'}],
+      });
+      Object.assign(st.orders[3], {max_workshops: 2,
+        conds: ['at least 10 wood', 'after Barrels 0 is completed'],
+        cond_info: [{key: 'i:1', cmp: 'AtLeast', val: 10, what: 'wood'}, {key: 'o:100:1'}]});
+      renderOrders();
+    }""")
+    page.evaluate("document.querySelector('.order[data-order=\\'103\\'] .name').click()")
+    assert page.locator(".condrow .condwhat").first.inner_text() == "wood"
+    assert page.locator(".condrow .condwhat").nth(1).inner_text() == "after Barrels 0 is completed"
+    assert page.locator(".editlimit").input_value() == "2"
+
+    page.evaluate("""() => {
+      const box = document.querySelector('.condval');
+      box.value = '25'; box.onchange();
+    }""")
+    assert page.evaluate("window.sent.pop()") == {"type": "edit_condition", "order": 103, "key": "i:1",
+                                                  "cmp": "AtLeast", "val": 25}
+    page.evaluate("""() => {
+      const box = document.querySelector('.condcmp');
+      box.value = 'LessThan'; box.onchange();
+    }""")
+    assert page.evaluate("window.sent.pop()") == {"type": "edit_condition", "order": 103, "key": "i:1",
+                                                  "cmp": "LessThan", "val": 25}
+    # no change, or a number DF wouldn't take, sends nothing
+    page.evaluate("""() => {
+      const box = document.querySelector('.condval');
+      box.value = '10'; document.querySelector('.condcmp').value = 'AtLeast'; box.onchange();
+      box.value = '-3'; box.onchange();
+    }""")
+    assert page.evaluate("window.sent.length") == 0
+
+    page.locator(".condremove").nth(1).evaluate("b => b.click()")
+    assert page.evaluate("window.sent.pop()") == {"type": "remove_condition", "order": 103, "key": "o:100:1"}
+
+    page.evaluate("""() => {
+      document.querySelector('.addconditem').value = 'DOOR';
+      document.querySelector('.addcondcmp').value = 'LessThan';
+      document.querySelector('.addcondval').value = '4';
+      document.querySelector('.addcondadd').click();
+    }""")
+    assert page.evaluate("window.sent.pop()") == {"type": "add_condition", "order": 103, "item": "DOOR",
+                                                  "cmp": "LessThan", "val": 4}
+    # an order can't wait for itself, so it isn't on its own list
+    assert "103" not in page.locator(".addcondorder option").evaluate_all("o => o.map(x => x.value)")
+    page.evaluate("""() => {
+      document.querySelector('.addcondorder').value = '105';
+      document.querySelector('.addcondwhen').value = 'Activated';
+      document.querySelector('.addcondafter').click();
+    }""")
+    assert page.evaluate("window.sent.pop()") == {"type": "add_condition", "order": 103, "after": 105, "when": "Activated"}
+
+    page.evaluate("""() => {
+      document.querySelector('.editlimit').value = '0';
+      document.querySelector('.editsave').click();
+    }""")
+    assert page.evaluate("window.sent.pop()") == {"type": "edit_order", "order": 103, "max_workshops": 0}
+    assert page.evaluate("$('orders').scrollWidth <= $('orders').clientWidth")
+
+    # an old module sends no keys and can't take the new messages
+    page.evaluate("""() => {
+      st.canEditConditions = false;
+      st.orders[3].cond_info = [{key: ''}, {key: ''}];
+      renderOrders();
+    }""")
+    assert page.locator(".condremove, .addcondadd, .editlimit").count() == 0
+    assert "at least 10 wood" in page.locator(".orderedit").inner_text()
+    assert errors == []
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
 SQUAD_FIXTURE = """() => {
   st.perms = new Set(['military']);
   st.canSquads = true;
@@ -386,4 +645,503 @@ def test_noble_panel_appoints_replaces_and_explains_locks(browser_page, width):
     assert page.locator(".nobleappoint").count() == 0
     assert errors == []
     assert page.evaluate("$('nobles').scrollWidth <= $('nobles').clientWidth")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+PLACE_FIXTURE = """() => {
+  st.perms = new Set(['build']);
+  st.canPlaces = true;
+  st.stockCategories = [{id: 'food', label: 'Food'}, {id: 'wood', label: 'Wood'}];
+  st.place = {kind: 'stockpile', id: 300, number: 1, name: '', tiles: 12, z: 5, x: 1, y: 1,
+              categories: ['wood'], barrels: 1, bins: 2, wheelbarrows: 0};
+  window.sent = [];
+  send = (m) => window.sent.push(m);
+  renderPlace();
+  openSide($("placeinfo"));
+}"""
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_place_panel_changes_stockpiles_and_zones(browser_page, width):
+    page = browser_page
+    page.set_viewport_size({"width": width, "height": 800})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    questions = []
+    page.on("dialog", lambda dialog: (questions.append(dialog.message), dialog.accept()))
+    serve_client(page)
+    page.evaluate(PLACE_FIXTURE)
+    assert "Stockpile #1" in page.locator("#placeinfo").inner_text()
+    assert page.evaluate("document.querySelector('[data-category=wood]').checked") is True
+    page.evaluate("document.querySelector('[data-category=food]').click()")
+    assert page.evaluate("window.sent.pop()") == {"type": "stockpile_category", "id": 300, "category": "food", "on": True}
+    assert questions == []
+    page.evaluate("document.querySelector('[data-category=wood]').click()")
+    assert page.evaluate("window.sent.pop()") == {"type": "stockpile_category", "id": 300, "category": "wood", "on": False}
+    assert "finer choices" in questions[-1]
+
+    page.evaluate("""() => {
+      document.querySelector('[data-limit=bins]').value = '7';
+      document.querySelector('.limitsave').click();
+    }""")
+    assert page.evaluate("window.sent.pop()") == {"type": "stockpile_containers", "id": 300, "barrels": 1, "bins": 7, "wheelbarrows": 0}
+    page.evaluate("""() => {
+      document.querySelector('[data-limit=bins]').value = '99';
+      document.querySelector('.limitsave').click();
+    }""")
+    assert page.evaluate("window.sent.length") == 0     # too many for 12 tiles
+
+    # a refresh doesn't wipe a half-typed name
+    page.evaluate("""() => {
+      const box = document.querySelector('.placename');
+      box.focus(); box.value = 'half';
+      renderPlace();
+    }""")
+    assert page.evaluate("document.querySelector('.placename').value") == "half"
+    page.evaluate("document.querySelector('.placename').blur(); document.querySelector('.placesave').click()")
+    assert page.evaluate("window.sent.pop()") == {"type": "rename_place", "id": 300, "name": "half"}
+
+    # a bedroom asks for its candidates, assigns and frees
+    page.evaluate("""() => {
+      st.place = {kind: 'zone', id: 58, number: 2, name: '', tiles: 9, z: 5, x: 6, y: 6, zone: 'DiningHall',
+                  active: true, ownable: true, owner: 'Urist, miner'};
+      renderPlace();
+    }""")
+    assert page.evaluate("window.sent.pop()") == {"type": "zone_candidates"}
+    assert "Dining hall #2" in page.locator("#placeinfo").inner_text()
+    page.evaluate("st.zoneCandidates = [{id: 8, name: 'Kadol, cook'}]; renderPlace()")
+    page.evaluate("document.querySelector('.zoneassign').click()")
+    assert page.evaluate("window.sent.pop()") == {"type": "zone_owner", "id": 58, "unit": 8}
+    page.evaluate("document.querySelector('.zonefree').click()")
+    assert page.evaluate("window.sent.pop()") == {"type": "zone_owner", "id": 58}
+    page.evaluate("document.querySelector('.zoneactive').click()")
+    assert page.evaluate("window.sent.pop()") == {"type": "zone_active", "id": 58, "on": False}
+
+    # a pen has no owner; without the permission nothing can be changed
+    page.evaluate("st.place = {...st.place, zone: 'Pen', ownable: false, owner: ''}; renderPlace()")
+    assert page.locator(".zoneassign").count() == 0
+    page.evaluate("st.perms = new Set(); st.place = {...st.place, ownable: true, owner: 'Urist'}; renderPlace()")
+    assert page.locator(".zoneassign").count() == 0 and page.locator(".zoneactive").count() == 0
+    assert page.locator(".placename").count() == 0
+    assert errors == []
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+WORKSHOP_FIXTURE = """() => {
+  st.perms = new Set(['order']);
+  st.canPlaces = true; st.canWorkshops = true;
+  st.zoneCandidates = [{id: 8, name: 'Kadol, mason', adult: true}, {id: 9, name: 'Little one', adult: false}];
+  st.place = {kind: 'workshop', id: 400, name: "Stoneworker's Workshop", custom: '', workshop: 'Masons', built: true,
+              z: 5, x: 11, y: 11, tiles: 9, general_orders: 5, orders_here: 1, workers: [],
+              jobs: [{id: 11, name: 'Make granite blocks', order: 8, worker: 'Urist', suspended: false, repeat: false,
+                      now: false, building: false},
+                     {id: 12, name: 'Make diorite throne with a very long name that has to wrap somewhere', order: -1,
+                      worker: '', suspended: true, repeat: true, now: true, building: false}]};
+  window.sent = [];
+  send = (m) => window.sent.push(m);
+  renderPlace();
+  openSide($("placeinfo"));
+}"""
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_workshop_panel_lists_tasks_and_changes_them(browser_page, width):
+    page = browser_page
+    page.set_viewport_size({"width": width, "height": 800})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    questions = []
+    page.on("dialog", lambda dialog: (questions.append(dialog.message), dialog.accept()))
+    serve_client(page)
+    page.evaluate(WORKSHOP_FIXTURE)
+    text = page.locator("#placeinfo").inner_text()
+    assert "Stoneworker's Workshop" in text and "2 tasks" in text
+    assert "Urist working · order #8" in text and "suspended · do now · repeats" in text
+    assert "Anyone may work here" in text and "up to 5 general work orders · 1 order tied here" in text
+    first = page.locator(".job").nth(0)
+    assert [b.inner_text() for b in first.locator("button").all()] == ["Suspend", "Do now", "Repeat", "Cancel"]
+    second = page.locator(".job").nth(1)
+    assert [b.inner_text() for b in second.locator("button").all()] == ["Resume", "Not first", "Just once", "Cancel"]
+    first.locator("[data-action=suspend]").click()
+    assert page.evaluate("window.sent.pop()") == {"type": "workshop_job", "id": 400, "job": 11, "action": "suspend"}
+    second.locator("[data-action=cancel]").click()
+    assert page.evaluate("window.sent.pop()") == {"type": "workshop_job", "id": 400, "job": 12, "action": "cancel"}
+    assert "Cancel" in questions[-1]
+
+    # only adults can be picked as the one worker
+    assert page.evaluate("[...document.querySelectorAll('.workerpick option')].map(o => o.value)") == ["8"]
+    page.click(".workerassign")
+    assert page.evaluate("window.sent.pop()") == {"type": "workshop_worker", "id": 400, "unit": 8}
+    assert page.locator(".workerfree").count() == 0
+    page.evaluate("st.place = {...st.place, workers: [{id: 8, name: 'Kadol, mason'}]}; renderPlace()")
+    assert "Only Kadol, mason works here" in page.locator("#placeinfo").inner_text()
+    page.click(".workerfree")
+    assert page.evaluate("window.sent.pop()") == {"type": "workshop_worker", "id": 400}
+
+    # the workshop being built offers nothing to change on that job
+    page.evaluate("""() => {
+      st.place = {...st.place, built: false,
+                  jobs: [{id: 13, name: 'Construct building', order: -1, worker: '', suspended: false,
+                          repeat: false, now: false, building: true}]};
+      renderPlace();
+    }""")
+    assert "being built" in page.locator("#placeinfo").inner_text()
+    assert page.locator(".job button").count() == 0
+
+    # read-only without the permission
+    page.evaluate(WORKSHOP_FIXTURE)
+    page.evaluate("st.perms = new Set(); renderPlace()")
+    assert page.locator(".job button").count() == 0 and page.locator(".workerassign").count() == 0
+    assert "Make granite blocks" in page.locator("#placeinfo").inner_text()
+    assert errors == []
+    assert page.evaluate("$('placeinfo').scrollWidth <= $('placeinfo').clientWidth")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_workshops_are_clickable_only_with_the_new_module(browser_page):
+    page = browser_page
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    serve_client(page)
+    page.evaluate("""() => {
+      st.perms = new Set(); st.canPlaces = true; st.canWorkshops = false; st.mode = 'look'; st.z = 5; st.units = [];
+      st.buildings = [{i: 400, name: 'Masons', kind: 'Workshop', x1: 2, x2: 4, y1: 2, y2: 4, z1: 5, z2: 5},
+                      {i: 401, name: 'Smelter', kind: 'Furnace', x1: 6, x2: 8, y1: 2, y2: 4, z1: 5, z2: 5},
+                      {i: 7, name: 'Bed', kind: 'Bed', x1: 5, x2: 5, y1: 5, y2: 5, z1: 5, z2: 5}];
+      window.sent = [];
+      send = (m) => window.sent.push(m);
+      st.cursor = {x: 3, y: 3}; pickCorner();
+      st.canWorkshops = true;
+      pickCorner();
+      st.cursor = {x: 7, y: 3}; pickCorner();
+      st.cursor = {x: 5, y: 5}; pickCorner();
+    }""")
+    assert [m["id"] for m in page.evaluate("window.sent")] == [400, 401]
+    assert errors == []
+
+
+def test_clicking_a_tile_inspects_the_place_there_and_cycles_overlaps(browser_page):
+    page = browser_page
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    serve_client(page)
+    page.evaluate("""() => {
+      st.perms = new Set(); st.canPlaces = true; st.mode = 'look'; st.z = 5; st.units = [];
+      st.buildings = [
+        {i: 7, name: 'Bed', kind: 'bed', x1: 3, x2: 3, y1: 3, y2: 3, z1: 5, z2: 5},
+        {i: 58, name: 'Bedroom', kind: 'building_civzonest', x1: 2, x2: 4, y1: 2, y2: 4, z1: 5, z2: 5},
+        {i: 59, name: 'Tomb', kind: 'building_civzonest', x1: 3, x2: 5, y1: 3, y2: 5, z1: 5, z2: 5}];
+      window.sent = [];
+      send = (m) => window.sent.push(m);
+      st.cursor = {x: 3, y: 3};
+      pickCorner(); pickCorner(); pickCorner();
+      st.cursor = {x: 9, y: 9};
+      pickCorner();
+    }""")
+    assert [m["id"] for m in page.evaluate("window.sent")] == [58, 59, 58]   # never the bed; empty tile sends nothing
+    assert errors == []
+
+
+def test_side_panel_can_be_dragged_wider_and_remembers(browser_page):
+    page = browser_page
+    page.set_viewport_size({"width": 1280, "height": 800})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    serve_client(page)
+    width = lambda: page.locator("#side").bounding_box()["width"]
+    assert width() == 240
+    map_before = page.evaluate("canvas.width")
+
+    def drag_to(x):
+        box = page.locator("#sidedrag").bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2, 300)
+        page.mouse.down()
+        page.mouse.move(x, 320, steps=4)
+        page.mouse.up()
+
+    drag_to(1280 - 400)
+    assert abs(width() - 400) <= 1
+    assert page.evaluate("canvas.width") < map_before        # the map gave up the room and stays sharp
+    assert page.evaluate("localStorage.getItem('df-coop-side-width')") == "400"
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+    drag_to(1270)            # too narrow
+    assert width() == 200
+    drag_to(10)              # too wide
+    assert width() == 720 or width() == 1280 * 0.7 // 1
+
+    page.evaluate("setSideWidth(400, true)")
+    page.reload()
+    page.wait_for_function("document.querySelector('#side').getBoundingClientRect().width === 400")
+
+    # the keyboard resizes it without panning the map
+    cam = page.evaluate("st.camX")
+    page.focus("#sidedrag")
+    page.keyboard.press("ArrowLeft")
+    assert width() == 420 and page.evaluate("st.camX") == cam
+    page.dblclick("#sidedrag")
+    assert width() == 240
+    # a window shrinking below a saved width pulls it back in
+    page.evaluate("setSideWidth(700, false)")
+    page.set_viewport_size({"width": 800, "height": 800})
+    page.wait_for_function("document.querySelector('#side').getBoundingClientRect().width <= 560")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    assert errors == []
+
+
+def test_phone_side_panel_has_no_drag_handle_and_ignores_saved_width(browser_page):
+    page = browser_page
+    page.set_viewport_size({"width": 390, "height": 800})
+    page.add_init_script("localStorage.setItem('df-coop-side-width', '600')")
+    serve_client(page)
+    assert not page.locator("#sidedrag").is_visible()
+    page.evaluate("openSide($('orders'))")
+    assert page.locator("#side").bounding_box()["width"] <= 390 * 0.85 + 1
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_squad_orders_station_kill_and_cancel(browser_page, width):
+    page = browser_page
+    page.set_viewport_size({"width": width, "height": 800})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    serve_client(page)
+    page.evaluate(SQUAD_FIXTURE)
+    page.evaluate("st.canSquadOrders = true; document.querySelector('.squad[data-squad=\\'2\\'] .name').click()")
+    sent = page.evaluate("window.sent.splice(0)")
+    assert {"type": "squad_targets"} in sent
+    assert "Looking for enemies" in page.locator(".squadedit").inner_text()
+
+    # nothing to fight: says so, and offers another look
+    page.evaluate("st.squadTargets = []; renderSquads()")
+    assert "No enemies in sight" in page.locator(".squadedit").inner_text()
+    assert page.locator(".squadkill").count() == 0
+    page.evaluate("document.querySelector('.squadlook').click()")
+    assert page.evaluate("window.sent.pop()") == {"type": "squad_targets"}
+
+    # one enemy, then all of them
+    page.evaluate("st.squadTargets = [{id: 40, name: 'Goblin'}, {id: 41, name: 'Troll'}]; renderSquads()")
+    page.evaluate("document.querySelector('.squadkill').click()")
+    assert page.evaluate("window.sent.pop()") == {"type": "squad_kill", "squad": 2, "units": [40, 41]}
+    page.evaluate("document.querySelector('.squadtarget').value = '41'; document.querySelector('.squadkill').click()")
+    assert page.evaluate("window.sent.pop()") == {"type": "squad_kill", "squad": 2, "units": [41]}
+
+    # Station picks a tile on the map, once, then goes back to Look
+    page.evaluate("document.querySelector('.squadstation').click()")
+    assert page.evaluate("st.mode") == "station"
+    assert "stand" in page.evaluate("$('hint').textContent")
+    page.evaluate("st.z = 5; st.cursor = {x: 12, y: 13}; pickCorner()")
+    assert page.evaluate("window.sent.pop()") == {"type": "squad_station", "squad": 2, "x": 12, "y": 13, "z": 5}
+    assert page.evaluate("st.mode") == "look" and page.evaluate("st.stationSquad") is None
+
+    # Esc backs out without sending anything
+    page.evaluate("document.querySelector('.squadstation').click(); setMode('look')")
+    assert page.evaluate("st.stationSquad") is None and page.evaluate("window.sent.length") == 0
+
+    # a stationed squad shows where, and can be cancelled
+    assert page.locator(".squadclear").count() == 0
+    page.evaluate("st.squads[0].station = {x: 12, y: 13, z: 5}; st.squads[0].orders = ['MOVE']; renderSquads()")
+    assert "Stationed at 12, 13, z5" in page.locator(".squadgo").inner_text()
+    assert "Orders: station" in page.locator(".squadedit").inner_text()
+    page.evaluate("document.querySelector('.squadclear').click()")
+    assert page.evaluate("window.sent.pop()") == {"type": "squad_clear", "squad": 2}
+    page.evaluate("document.querySelector('.squadgo').click()")
+    assert page.evaluate("[st.camX, st.camY, st.z]") == [12, 13, 5]
+
+    # without the permission, or on an older module: no controls
+    page.evaluate("st.perms = new Set(); renderSquads()")
+    assert page.locator(".squadstation").count() == 0 and page.locator(".squadclear").count() == 0
+    page.evaluate("st.perms = new Set(['military']); st.canSquadOrders = false; renderSquads()")
+    assert page.locator(".squadstation").count() == 0
+    assert errors == []
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_stocks_panel_groups_filters_and_remembers_what_was_open(browser_page, width):
+    page = browser_page
+    page.set_viewport_size({"width": width, "height": 800})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    serve_client(page)
+    page.evaluate("""() => {
+      st.canStocks = true;
+      window.sent = [];
+      send = (m) => window.sent.push(m);
+      showStocks(true);
+      openSide($("stockstoggle").parentElement);
+    }""")
+    assert page.evaluate("window.sent") == [{"type": "stocks"}]
+    assert "counting" in page.locator("#stocks").inner_text()
+    page.evaluate("""() => onMessage({type: 'stocks', ok: true, age: 12, groups: [
+      {name: 'Raw materials', total: 14306, rows: [{name: 'kapok logs', count: 8312}, {name: 'coal bars', count: 5994}]},
+      {name: 'Remains', total: 342, rows: [{name: 'blue peafowl body parts with a long name that must wrap', count: 342}]}]})""")
+    text = page.locator("#stocks").inner_text()
+    assert "Raw materials" in text and "14,306" in text and "Counted 12 s ago" in text
+    assert page.evaluate("[...document.querySelectorAll('.stockgroup')].map(g => g.open)") == [False, False]
+    page.click(".stockgroup[data-group='Raw materials'] summary")
+    page.fill("#stockfilter", "coal")
+    assert page.evaluate("[...document.querySelectorAll('.stockgroup')].map(g => g.dataset.group)") == ["Raw materials"]
+    assert page.locator(".stockrow").all_inner_texts() == ["coal bars\n5,994"]
+    page.fill("#stockfilter", "zzz")
+    assert "nothing matches" in page.locator("#stocks").inner_text()
+    page.fill("#stockfilter", "")
+    # what was opened stays open when new counts arrive
+    page.evaluate("renderStocks()")
+    assert page.evaluate("[...document.querySelectorAll('.stockgroup')].map(g => g.open)") == [True, False]
+    page.evaluate("showStocks(false)")
+    assert page.evaluate("$('stocks').hidden && $('stockfilter').hidden")
+    assert errors == []
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_stocks_key_opens_the_panel(browser_page):
+    page = browser_page
+    serve_client(page)
+    page.evaluate("""() => {
+      st.canStocks = true; window.sent = [];
+      send = (m) => { window.sent.push(m); };
+    }""")
+    page.keyboard.press("k")
+    assert page.evaluate("st.stocksOpen") is True
+    assert page.evaluate("window.sent") == [{"type": "stocks"}]
+
+
+FARM_FIXTURE = """() => {
+  st.perms = new Set(['build']);
+  st.canPlaces = true; st.canFarms = true;
+  const helmets = {id: 173, name: 'plump helmets', seeds: 58};
+  st.place = {kind: 'farm', id: 500, name: '', tiles: 16, z: 121, x: 1, y: 1, underground: true, fertilize: false,
+              season: 2,
+              crops: [{id: 176, name: 'sweet pods'}, {id: 174, name: 'pig tails'}, {id: -1, name: ''},
+                      {id: 999, name: 'an old crop'}],
+              options: [[helmets, {id: 176, name: 'sweet pods', seeds: 36}],
+                        [helmets, {id: 174, name: 'pig tails', seeds: 45}, {id: 175, name: 'quarry bushes', seeds: 0}],
+                        [helmets], [helmets]]};
+  window.sent = [];
+  send = (m) => window.sent.push(m);
+  renderPlace();
+  openSide($("placeinfo"));
+}"""
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_farm_panel_picks_a_crop_per_season(browser_page, width):
+    page = browser_page
+    page.set_viewport_size({"width": width, "height": 800})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    serve_client(page)
+    page.evaluate(FARM_FIXTURE)
+    text = page.locator("#placeinfo").inner_text()
+    assert "Farm plot" in text and "16 tiles · underground" in text and "Autumn (now)" in text
+    values = page.evaluate("[...document.querySelectorAll('.farmcrop')].map(s => s.value)")
+    assert values == ["176", "174", "-1", "999"]           # a crop that no longer fits still shows
+    assert page.locator(".placebox .warn").count() == 0
+    page.evaluate("st.place = {...st.place, autofarm: true}; renderPlace()")
+    assert "autofarm is on" in page.locator(".placebox .warn").inner_text()
+    labels = page.evaluate("[...document.querySelectorAll('.farmcrop')[1].options].map(o => o.textContent)")
+    assert labels == ["fallow", "plump helmets (58 seeds)", "pig tails (45 seeds)", "quarry bushes (no seeds)"]
+    page.select_option(".farmcrop[data-season='2']", "173")
+    assert page.evaluate("window.sent.pop()") == {"type": "farm_crop", "id": 500, "season": 2, "plant": 173}
+    page.select_option(".farmcrop[data-season='0']", "-1")
+    assert page.evaluate("window.sent.pop()") == {"type": "farm_crop", "id": 500, "season": 0, "plant": -1}
+    page.click(".farmfert input")
+    assert page.evaluate("window.sent.pop()") == {"type": "farm_fertilize", "id": 500, "on": True}
+    page.evaluate("st.perms = new Set(); renderPlace()")
+    assert page.locator(".farmcrop").count() == 0
+    assert "pig tails" in page.locator("#placeinfo").inner_text() and "fallow" in page.locator("#placeinfo").inner_text()
+    assert page.evaluate("document.querySelector('.farmfert input').disabled")
+    assert errors == []
+    assert page.evaluate("$('placeinfo').scrollWidth <= $('placeinfo').clientWidth")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_farm_plots_are_clickable_only_with_the_new_module(browser_page):
+    page = browser_page
+    serve_client(page)
+    page.evaluate("""() => {
+      st.perms = new Set(); st.canPlaces = true; st.canWorkshops = true; st.canFarms = false; st.mode = 'look';
+      st.z = 5; st.units = [];
+      st.buildings = [{i: 500, name: 'Farm Plot', kind: 'FarmPlot', x1: 2, x2: 5, y1: 2, y2: 5, z1: 5, z2: 5}];
+      window.sent = [];
+      send = (m) => window.sent.push(m);
+      st.cursor = {x: 3, y: 3}; pickCorner();
+      st.canFarms = true; pickCorner();
+    }""")
+    assert [m["id"] for m in page.evaluate("window.sent")] == [500]
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_smoothing_tools_appear_with_the_module_send_marks_and_draw_them(browser_page, width):
+    page = browser_page
+    page.set_viewport_size({"width": width, "height": 800})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    serve_client(page)
+    assert page.locator("#detailbtn").is_hidden()
+    page.evaluate("""() => {
+      st.perms = new Set(['dig']); st.role = 'miner';
+      onMessage({type: 'hello', you: {id: 1, name: 'Alice', role: 'miner', perms: ['dig', 'chat']},
+                 map: {w: 16, h: 16, d: 3}, view: {x: 8, y: 8, z: 1}, tiles: [], catalog: [],
+                 order_catalog: {groups: [], orders: [], frequencies: [], moves: []}, orders: [], squads: [],
+                 nobles: [], reports: [], chat: [],
+                 can_detail: true});
+      window.sent = [];
+      send = (m) => window.sent.push(m);
+    }""")
+    assert page.locator("#detailbtn").is_visible()
+    page.keyboard.press("m")
+    page.keyboard.press("v")
+    assert page.evaluate("st.mode") == "smooth"
+    page.keyboard.press("v")                            # v cycles, like stairs
+    assert page.evaluate("st.mode") == "engrave"
+    page.keyboard.press("v")
+    assert page.evaluate("st.mode") == "fortify"
+    assert page.locator("#detailname").inner_text() == "Fortify"
+    page.keyboard.press("i")
+    assert page.evaluate("st.mode") == "engrave"
+    page.keyboard.press("f")
+    assert page.evaluate("st.mode") == "fortify"
+    page.evaluate("setMode('dig')")
+    page.click("#detailbtn")                            # the button remembers fortify, then cycles
+    assert page.evaluate("st.mode") == "fortify"
+    page.click("#detailbtn")
+    assert page.evaluate("st.mode") == "smooth" and page.locator("#detailname").inner_text() == "Smooth"
+    assert page.evaluate("!$('prio').hidden")          # priority applies to these too
+    page.evaluate("""() => {
+      setMode('smooth'); setPriority(2); st.z = 1;
+      st.cursor = {x: 3, y: 4}; pickCorner();
+      st.cursor = {x: 5, y: 6}; pickCorner();
+    }""")
+    assert page.evaluate("window.sent.pop()") == {"type": "dig", "kind": "smooth", "x1": 3, "y1": 4, "x2": 5, "y2": 6,
+                                                  "z": 1, "priority": 2}
+    page.evaluate("""() => onMessage({type: 'dig_result', ok: true, kind: 'smooth', applied: 6, skipped: 3,
+                                        priority: 2})""")
+    assert "Marked to smooth 6 tiles at priority 2, 3 skipped" in page.locator("#toast").inner_text()
+    # marks arrive and are drawn over a visible tile
+    page.evaluate("""() => {
+      st.map = {w: 16, h: 16, d: 3}; st.z = 1; st.camX = 8; st.camY = 8; st.cell = 24;
+      st.tiles = [['.', '#333', 'floor', false, '']];
+      st.blocks.set('0,0,1', {x: 0, y: 0, z: 1, t: Array(256).fill(0), d: Array(256).fill(0)});
+      onMessage({type: 'detail_marks', marks: [[8, 8, 1, 's'], [9, 8, 1, 'e'], [10, 8, 1, 'f']]});
+      setMode('look');
+    }""")
+    page.wait_for_function("!st.dirty")
+    colors = page.evaluate("""() => {
+      const view = viewport();
+      const edge = (x, y) => Array.from(ctx.getImageData(
+        Math.round((x - view.x0) * st.cell - view.ox + st.cell / 8 - 1),   // on the outline
+        Math.round((y - view.y0 + 0.5) * st.cell - view.oy), 1, 1).data).slice(0, 3);
+      return {s: edge(8, 8), e: edge(9, 8), f: edge(10, 8), none: edge(11, 8)};
+    }""")
+    assert colors["s"][2] > 150 and colors["e"][0] > 150 and colors["f"][2] > 150
+    assert colors["none"] != colors["s"]
+    assert page.evaluate("st.detailMarks.size") == 3
+    # without the module the keys explain instead of switching
+    page.evaluate("st.canDetail = false; setMode('dig')")
+    page.keyboard.press("v")
+    assert page.evaluate("st.mode") == "dig"
+    assert errors == []
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

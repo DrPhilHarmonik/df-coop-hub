@@ -36,20 +36,44 @@ Messages, hub to player (JSON):
     remove_result {ok, what?, outcome?: removed|queued|already|nothing, error?}
     orders     {orders: [{id, label, material, left, total, freq, status, conds}]}   the
                                             manager queue, in queue order; status:
-                                            active|validated|waiting, conds: [str]
+                                            active|validated|waiting, conds: [str], cond_info: [{key, cmp?, val?, what?}]
+                                            (same order as conds), max_workshops: 0 = no limit
     order_result {ok, label, amount, error?}
     cancel_result {ok, label?, error?}
     edit_result {ok, label?, error?}
     move_result {ok, error?}
-    squads     {squads: [{id, name, alias, slots, routine, orders: [str],
+    squads     {squads: [{id, name, alias, slots, routine, orders: [str], station?: {x, y, z}, kill,
                 members: [{slot, leader, unit, name, away}]}]}
     squad_candidates {ok, units?: [{id, name}], error?}   adult citizens in no squad
     squad_result {ok, action, name?, error?}
+    squad_targets {ok, units?: [{id, name, x, y, z}], error?}   enemies this player can see
     nobles     {nobles: [{id, code, title, holder, locked, duties: [str], needs: {..}}]}
                                             in order of rank; locked says why a
                                             post can't be changed here, or is ""
     noble_candidates {ok, units?: [{id, name}], error?}
+    citizens   {ok, citizens?: [{id, name, profession, job, mood, stress, squad, x?, y?, z?}], error?}
+                                           no location for those on unseen tiles
+    stocks     {ok, groups?: [{name, total, rows: [{name, count}]}], age?, error?}
+                                            age: seconds since DF was counted
+    work_details {ok, details?: [{i, name, mode, no_everybody, labors: [str], members: [ids]}],
+                  people?: [{id, name}], error?}   members: living only; people: adults
+    work_detail_result {ok, error?}
     noble_result {ok, action, title?, name?, error?}
+    place_info {ok, place?: {kind: stockpile|zone|workshop, id, name, tiles, z, x, y, ...}, error?}
+                                            stockpile: number, categories, barrels, bins,
+                                            wheelbarrows; zone: number, zone, active, ownable,
+                                            owner; workshop: workshop (its kind), custom, built,
+                                            jobs [{id, name, order, worker, suspended, repeat,
+                                            now, building}], workers [{id, name}] (one at most),
+                                            general_orders, orders_here; farm: underground,
+                                            fertilize, autofarm (DFHack's, picks crops itself),
+                                            season (0 spring), crops [{id, name}] x4,
+                                            options [[{id, name, seeds}]] x4
+    detail_marks {marks: [[x, y, z, k]]}   smoothing (s), engraving (e) and fortification
+                                            (f) marks on the player's levels, when they change
+    place_changed {id}        someone changed it; ask again if it's on screen
+    zone_candidates {ok, units?: [{id, name}], error?}
+    place_result {ok, action, name?, error?}
     reports    {reports: [{id, text, color, date, x?, y?, z?}]}   new announcements
     unit_info  {ok, unit?: {name, profession, job, mood, age, squad, needs}, error?}
     chat       {entry: {kind: chat|ping, from, color, text?, x?, y?, z?, date}}
@@ -59,21 +83,47 @@ Messages, hub to player (JSON):
 Player to hub:
     view       {z, cx, cy}    level being viewed and cursor tile
     dig        {kind, x1, y1, x2, y2, z, priority?}   kind: dig updown up down
-                                           ramp channel erase (actions.py);
+                                           ramp channel erase, or smooth engrave
+                                           fortify (module v20; erase clears them too);
                                            priority 1 (first) to 7, default 4
     pause      {value}        true: pause and hold; false: ready to resume
+    visibility {hidden}       their tab went to the background or came back
     order      {id, amount, material?, freq?}   id: a catalog.py ORDERS id;
                                            freq: a catalog.ORDER_FREQUENCIES key
     cancel_order {order}      a manager order id (refused while being worked on)
-    edit_order {order, amount?, freq?}   set either or both; a new amount restarts the count
+    edit_order {order, amount?, freq?, max_workshops?}   a new amount restarts the count;
+                                           0 max_workshops = no limit
+    edit_condition {order, key, cmp, val}   key from cond_info; cmp a catalog.CONDITION_COMPARES key
+    remove_condition {order, key}
+    add_condition {order, item, cmp, val} or {order, after, when}   -> condition_result {ok, label, error?}
     move_order {order, to}    to: up down top bottom
     squad_candidates {}       who could join a squad
     squad_add  {squad, unit}  into the first open slot
     squad_remove {squad, unit}   not the leader, not while away
     rename_squad {squad, name}   empty restores the generated name
+    squad_station {squad, x, y, z}   replaces its station and kill orders
+    squad_targets {}          enemies a kill order could name
+    squad_kill {squad, units: [ids]}   enemies this player can see; replaces as above
+    squad_clear {squad}       cancels its station and kill orders
     noble_candidates {}       who could hold a post
+    citizens   {}             everyone in the fort; the client asks while its panel is open
+    stocks     {}             what the fort has; likewise, and counted at most once a minute
+    work_details {}           likewise
+    work_detail_member {detail, name, unit, on}   detail: its i; name guards a stale list
+    work_detail_mode {detail, name, mode}         mode: a catalog.WORK_DETAIL_MODES key
     appoint_noble {post, unit}   post: a nobles id; replaces any current holder
     vacate_noble {post}
+    inspect_place {id, x, y, z}   a stockpile or zone on a visible tile
+    stockpile_category {id, category, on}   category: a catalog.STOCK_CATEGORIES key
+    stockpile_containers {id, barrels, bins, wheelbarrows}
+    rename_place {id, name}   a stockpile or zone; empty clears it
+    zone_candidates {}        who could own a room
+    zone_owner {id, unit?}    no unit frees the room
+    zone_active {id, on}
+    workshop_job {id, job, action}   action: a catalog.WORKSHOP_JOB_ACTIONS entry
+    workshop_worker {id, unit?}      no unit lets anyone work there
+    farm_crop  {id, season, plant}   season 0-3 (spring first); plant from options, -1 fallow
+    farm_fertilize {id, on}
     inspect    {unit}         a unit id the player can currently see
     chat       {text}         up to 300 characters
     ping       {x, y, z}      point everyone at a tile
@@ -116,15 +166,19 @@ from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request, Response
 
 from away import AWAY_MIN_SECONDS, SeenStore, summarize_actions
-from actions import (DEFAULT_ROLE, DIG_KINDS, MAX_DIG_TILES, NEEDS, ROLES, VERB, ActionLog,
+from actions import (DEFAULT_ROLE, DETAIL_KINDS, DIG_KINDS, MAX_DIG_TILES, NEEDS, ROLES, VERB, ActionLog,
                      Owners, RateLimiter, color_for, designation_spans, eligible, rect_tiles)
-from catalog import (BY_ID, PAGE_LABELS, PAGES, ITEMS, MAX_AREA_SIDE, MAX_ORDER_AMOUNT, ORDER_FREQUENCIES,
+from catalog import (BY_ID, CONDITION_COMPARES, CONDITION_ITEMS, CONDITION_WHENS, MAX_CONDITION_VALUE, MAX_WORKSHOPS,
+                     PAGE_LABELS, PAGES, ITEMS, MAX_AREA_SIDE, MAX_ORDER_AMOUNT, ORDER_FREQUENCIES,
+                     WORK_DETAIL_MODES, WORKSHOP_JOB_ACTIONS, condition_what, labor_label, stock_rows,
+                     STOCK_CATEGORIES,
                      ORDER_GROUPS, ORDER_MOVES, ORDERS, ORDERS_BY_ID, STRESS_LABELS, condition_text,
                      game_date, humanize, order_label,
                      summarize)
 from dfhack_rpc import DFHackRPC, DFHackRPCError, rfr
 from game_tiles import GameTileset
 from mapstate import BLOCK, MapState
+from rpcstats import RpcStats, call_name
 from tiles import tiletype_table
 
 log = logging.getLogger("df-coop")
@@ -135,7 +189,7 @@ CONFIG_PATH = Path(os.environ.get("DF_COOP_CONFIG", Path.home() / ".config/df-co
 DATA_DIR = Path(os.environ.get("DF_COOP_DATA", Path.home() / ".local/share/df-coop"))
 DF_DIR = Path(os.environ.get("DF_DIR", Path.home() / ".local/share/Steam/steamapps/common/Dwarf Fortress"))
 LUA_SOURCE = HERE / "lua" / "rpc" / "coop.lua"
-LUA_VERSION = 10
+LUA_VERSION = 20
 LUA_FOR_REMOVE = 2     # the oldest module each feature works with
 LUA_FOR_ORDERS = 3
 LUA_FOR_INFO = 4       # announcements and the unit inspector
@@ -144,11 +198,37 @@ LUA_FOR_PRIORITY = 7
 LUA_FOR_ORDER_EDITS = 8  # amounts, repeats and queue position
 LUA_FOR_SQUADS = 9
 LUA_FOR_NOBLES = 10
+LUA_FOR_PLACES = 11
+LUA_FOR_SQUAD_ORDERS = 12
+LUA_FOR_CONDITIONS = 13
+LUA_FOR_CITIZENS = 14
+LUA_FOR_WORK_DETAILS = 15
+LUA_FOR_WORKSHOPS = 16
+LUA_FOR_STOCKS = 17
+LUA_FOR_FARMS = 18
+LUA_FOR_UNITS = 19   # creatures through coop.lua: about a quarter of RFR's cost
+LUA_FOR_DETAIL = 20  # smooth, engrave, fortify
+MAX_KILL_TARGETS = 50
 MAX_SQUAD_NAME = 40
 KEEP_REPORTS = 100
 KEEP_CHAT = 50
 MAX_CHAT = 300
 MAX_POLL_LEVELS = 2
+# Seconds between polls. DF stops for every call and a call's size barely changes
+# its cost (a sixth of a level costs about the same as all of it), so these keep
+# the number of calls down. Changes players make are read straight away instead.
+POLL_DATE = 10.0
+POLL_REPORTS = 3.0
+POLL_ORDERS = 5.0
+POLL_SQUADS = 10.0
+POLL_NOBLES = 30.0
+POLL_TICK = 0.1         # how often the loop looks at what's due; costs DF nothing
+POLL_SOON_GAP = 0.25    # the shortest gap between map reads, however busy players are
+HIDDEN_SLOWDOWN = 4     # when every player's tab is in the background
+CITIZENS_CACHE = 3.0    # players share one read of the citizens list this long
+STOCKS_CACHE = 60.0     # and of stocks: one count holds DF for about half a second
+MAX_CONDITION_KEY = 200
+MAX_DETAIL_NAME = 100
 
 
 def install_lua(df_dir: Path = DF_DIR) -> Path:
@@ -240,7 +320,9 @@ class Session:
     z: int
     cx: int = -1
     cy: int = -1
+    hidden: bool = False  # their browser tab is in the background
     last_units: str = field(default="", repr=False)
+    last_detail: str = field(default="", repr=False)
     role: str = DEFAULT_ROLE
     graphics: bool = False
     limiter: RateLimiter = field(default_factory=RateLimiter, repr=False)
@@ -264,7 +346,7 @@ class Session:
 class Hub:
     def __init__(self, df, players: dict[str, str], *, roles: dict[str, str] | None = None,
                  players_path: Path | None = None,
-                 poll_interval: float = 0.25, unit_interval: float = 0.5,
+                 poll_interval: float = 1.0, unit_interval: float = 0.5,
                  static_dir: Path = STATIC_DIR, data_dir: Path = DATA_DIR, df_dir: Path = DF_DIR):
         self.df = df
         self.players = players
@@ -297,6 +379,13 @@ class Hub:
         self._squads_due = 0.0
         self.nobles: list[dict] = []
         self._nobles_due = 0.0
+        self._citizens: list[dict] = []
+        self._citizens_read = float("-inf")
+        self._work_details: dict = {}
+        self._work_details_read = float("-inf")
+        self._stocks: list[dict] = []
+        self._stocks_read = float("-inf")
+        self._stocks_lock = asyncio.Lock()
         self.reports: list[dict] = []
         self.chat: list[dict] = []   # memory only; never written to disk
         self._report_after = -1
@@ -310,8 +399,13 @@ class Hub:
         self.df_online = False
         self.sessions: dict[ServerConnection, Session] = {}
         self.fetched_z: set[int] = set()
+        self._blocks_due = 0.0
+        self._last_blocks = 0.0
+        self._units_due = 0.0
+        self._paused_due = 0.0
         self._ids = itertools.count(1)
         self._df_lock = asyncio.Lock()
+        self.rpc_stats = RpcStats()
         self._offline_reason = ""
         self._offline_wait = 5.0  # seconds between reconnect attempts
 
@@ -320,7 +414,11 @@ class Hub:
     async def _df(self, fn, *args, **kwargs):
         """Run one blocking DFHack call off the event loop, one at a time."""
         async with self._df_lock:
-            return await asyncio.to_thread(fn, *args, **kwargs)
+            started = time.perf_counter()
+            try:
+                return await asyncio.to_thread(fn, *args, **kwargs)
+            finally:
+                self.rpc_stats.record(call_name(fn, args), time.perf_counter() - started)
 
     async def setup(self) -> None:
         """Connect if needed and load the fortress's fixed data. Raises
@@ -451,7 +549,9 @@ class Hub:
         orders = [{"id": o["id"], "label": labels[o["id"]], "material": o["material"],
                    "left": o["left"], "total": o["total"], "freq": o["freq"],
                    "status": "active" if o.get("active") else "validated" if o.get("validated") else "waiting",
-                   "conds": [condition_text(c, labels) for c in o.get("conds") or []]}
+                   "max_workshops": o.get("max_workshops", 0),
+                   "conds": [condition_text(c, labels) for c in o.get("conds") or []],
+                   "cond_info": [_condition_info(c) for c in o.get("conds") or []]}
                   for o in raw]
         if orders != self.orders:
             self.orders = orders
@@ -474,6 +574,25 @@ class Hub:
         if nobles != self.nobles:
             self.nobles = nobles
             broadcast([s.conn for s in self.sessions.values()], json.dumps({"type": "nobles", "nobles": nobles}))
+
+    async def _poll_detail_marks(self) -> None:
+        """Smoothing marks on players' levels; sent to each player only when theirs change."""
+        if not self.lua_ok or self.lua_version < LUA_FOR_DETAIL:
+            return
+        levels = sorted({z for s in self.sessions.values() for z in s.zs if 0 <= z < self.state.depth})
+        if not levels:
+            return
+        raw = json.loads((await self._df(self.df.run_lua, "rpc.coop", "detail_marks",
+                                         ",".join(map(str, levels))))[0])
+        by_z = raw if isinstance(raw, dict) else {}
+        letters = {"smooth": "s", "engrave": "e", "fortify": "f"}
+        for s in list(self.sessions.values()):
+            mine = sorted([x, y, int(z), letters.get(k, "s")] for z, marks in by_z.items() if int(z) in s.zs
+                          for x, y, k in marks)
+            msg = json.dumps({"type": "detail_marks", "marks": mine})
+            if msg != s.last_detail:
+                s.last_detail = msg
+                self._send_raw(s, msg)
 
     async def poll_blocks(self) -> None:
         wanted = set()
@@ -510,10 +629,29 @@ class Hub:
         if buildings_changed:
             for s in self.sessions.values():
                 self._send(s, self._buildings_msg(s))
+        await self._poll_detail_marks()
 
-    async def poll_units(self) -> None:
-        self.current_players()   # pick up role changes from `set-role` without a reconnect
-        units = (await self._df(self.df.units)).creature_list
+    def _poll_blocks_soon(self) -> None:
+        """Read the map soon, for a change a player is waiting to see."""
+        self._blocks_due = min(self._blocks_due, self._last_blocks + POLL_SOON_GAP)
+
+    def _slowdown(self) -> int:
+        """How much less often to poll: nobody's looking if every tab is hidden."""
+        if self.sessions and all(s.hidden for s in self.sessions.values()):
+            return HIDDEN_SLOWDOWN
+        return 1
+
+    def _on_visibility(self, s: Session, hidden: bool) -> None:
+        was_slow = self._slowdown() > 1
+        s.hidden = hidden
+        if was_slow and self._slowdown() == 1:
+            # Someone came back: catch them up now, not at the slower pace.
+            self._blocks_due = self._units_due = self._paused_due = 0.0
+
+    async def _poll_paused(self, now: float) -> None:
+        if now < self._paused_due:
+            return
+        self._paused_due = now + self.unit_interval * 2 * self._slowdown()
         paused = await self._df(self.df.paused)
         if self.hold_active and not paused:
             # Someone unpaused in DF itself: that overrides every hold.
@@ -523,7 +661,38 @@ class Hub:
         if paused != self.paused:
             self.paused = paused
             self._broadcast_pause()
+
+    async def _read_units(self) -> tuple[list[dict], dict[int, tuple[list, bool]]]:
+        """Creatures players can see on their levels, and for graphics each one's worn and
+        wielded items as (item type, subtype) and whether it's a baby. coop.lua sends only
+        what's asked; older modules fall back to RemoteFortressReader's list of every unit."""
+        if self.lua_ok and self.lua_version >= LUA_FOR_UNITS:
+            levels = sorted({z for s in self.sessions.values() for z in s.zs if 0 <= z < self.state.depth})
+            if not levels:
+                return [], {}
+            gear = any(s.graphics for s in self.sessions.values())
+            rows = json.loads((await self._df(self.df.run_lua, "rpc.coop", "units", ",".join(map(str, levels)),
+                                              "1" if gear else "0"))[0])
+            rows = rows if isinstance(rows, list) else []
+            equipment = {r["i"]: ([tuple(g) for g in r.get("gear", [])], bool(r.get("baby"))) for r in rows}
+            visible = [{k: r[k] for k in ("i", "x", "y", "z", "n", "c", "race", "caste")} for r in rows
+                       if 0 <= r["x"] < self.state.width and 0 <= r["y"] < self.state.height]
+            return visible, equipment
+        units = (await self._df(self.df.units)).creature_list
+        visible = self.state.visible_units(units)
+        ids = {u["i"] for u in visible}
+        equipment = {u.id: ([(e.item.type.mat_type, e.item.type.mat_index) for e in u.inventory
+                             if e.mode in (rfr.Worn, rfr.Weapon)],
+                            u.HasField("age") and u.age == 0)
+                     for u in units if u.id in ids}
+        return visible, equipment
+
+    async def poll_units(self) -> None:
+        self.current_players()   # pick up role changes from `set-role` without a reconnect
+        visible, equipment = await self._read_units()
         now = asyncio.get_running_loop().time()
+        await self._poll_paused(now)
+        slow = self._slowdown()
         if (not self.lua_ok or self.lua_version < LUA_VERSION) and now >= self._lua_recheck_due:
             # Pick up `install-lua` without a hub restart.
             self._lua_recheck_due = now + 10.0
@@ -533,22 +702,21 @@ class Hub:
                 for s in self.sessions.values():
                     self._send(s, self._hello(s))
         if now >= self._date_due:
-            self._date_due = now + 2.0
+            self._date_due = now + POLL_DATE * slow
             await self._poll_date()
         if now >= self._orders_due:
-            self._orders_due = now + 3.0
+            self._orders_due = now + POLL_ORDERS * slow
             await self._poll_orders()
         if now >= self._squads_due:
-            self._squads_due = now + 5.0
+            self._squads_due = now + POLL_SQUADS * slow
             await self._poll_squads()
         if now >= self._nobles_due:
-            self._nobles_due = now + 10.0
+            self._nobles_due = now + POLL_NOBLES * slow
             await self._poll_nobles()
         if now >= self._reports_due:
-            self._reports_due = now + 2.0
+            self._reports_due = now + POLL_REPORTS * slow
             await self._poll_reports()
-        visible = self.state.visible_units(units)
-        await self._unit_graphics(visible, units)
+        await self._unit_graphics(visible, equipment)
         by_levels = {}
         for s in list(self.sessions.values()):
             by_levels.setdefault(frozenset(s.zs), []).append(s)
@@ -562,7 +730,7 @@ class Hub:
                     s.last_units = msg
                     self._send_raw(s, msg)
 
-    async def _unit_graphics(self, visible, units) -> None:
+    async def _unit_graphics(self, visible, equipment) -> None:
         levels = {z for session in self.sessions.values() if session.graphics for z in session.zs}
         visible = [unit for unit in visible if unit["z"] in levels]
         if not visible:
@@ -581,43 +749,47 @@ class Hub:
                     log.warning("creature graphics definitions unavailable: %s", exc)
                     self._graphics_rpc = False
                     break
-        source_units = {unit.id: unit for unit in units}
         for unit in visible:
             raw = self.state.creature_defs.get(unit.get("race"))
             if not raw:
                 continue
             creature, castes = raw
-            source = source_units[unit["i"]]
-            equipment = []
-            for entry in source.inventory:
-                if entry.mode not in (rfr.Worn, rfr.Weapon):
-                    continue
-                kind = entry.item.type
-                token = self.state.item_defs.get((kind.mat_type, kind.mat_index), "")
+            items, baby = equipment.get(unit["i"], ([], False))
+            worn = []
+            for kind in items:
+                token = self.state.item_defs.get(tuple(kind), "")
                 if token:
-                    equipment.append(token.split(":")[-1].split("/")[-1])
-            layers = self.game_tileset.unit_sprites(creature, castes.get(unit["caste"], ""), equipment,
-                                                   "BABY" if source.HasField("age") and source.age == 0 else "DEFAULT")
+                    worn.append(token.split(":")[-1].split("/")[-1])
+            layers = self.game_tileset.unit_sprites(creature, castes.get(unit["caste"], ""), worn,
+                                                   "BABY" if baby else "DEFAULT")
             if layers:
                 unit["g"] = layers
 
     async def run_polling(self, stop: asyncio.Event) -> None:
         loop = asyncio.get_running_loop()
-        next_units = 0.0
         while not stop.is_set():
             try:
                 if not self.df_online:
                     await self._reconnect()
                 if self.sessions:
-                    await self.poll_blocks()
-                    if loop.time() >= next_units:
+                    now = loop.time()
+                    if now >= self._blocks_due:
+                        # Set first: a player acting during the read asks for another.
+                        self._last_blocks = now
+                        self._blocks_due = now + self.poll_interval * self._slowdown()
+                        await self.poll_blocks()
+                    if loop.time() >= self._units_due:
                         await self.poll_units()
-                        next_units = loop.time() + self.unit_interval
+                        self._units_due = loop.time() + self.unit_interval * self._slowdown()
             except (DFHackRPCError, OSError) as exc:
                 self._note_offline(exc)
                 await self._go_offline()
+            summary = self.rpc_stats.report(loop.time())
+            if summary:
+                log.info("%s", summary)
             try:
-                await asyncio.wait_for(stop.wait(), self.poll_interval if self.df_online else self._offline_wait)
+                tick = min(POLL_TICK, self.poll_interval, self.unit_interval)
+                await asyncio.wait_for(stop.wait(), tick if self.df_online else self._offline_wait)
             except asyncio.TimeoutError:
                 pass
 
@@ -726,6 +898,7 @@ class Hub:
                           z=self.view["z"], cx=self.view["x"], cy=self.view["y"],
                           role=self.roles.get(name, DEFAULT_ROLE))
         self.sessions[conn] = session
+        self._poll_blocks_soon()
         log.info("%s joined (%d playing)", name, len(self.sessions))
         try:
             self._send(session, self._hello(session))
@@ -783,12 +956,33 @@ class Hub:
                 await self._on_edit_order(s, msg)
             elif kind == "move_order":
                 await self._on_move_order(s, msg)
+            elif kind in ("edit_condition", "remove_condition", "add_condition"):
+                await self._on_condition(s, kind, msg)
             elif kind == "squad_candidates":
                 await self._on_squad_candidates(s)
             elif kind in ("squad_add", "squad_remove", "rename_squad"):
                 await self._on_squad_change(s, kind, msg)
+            elif kind == "squad_targets":
+                await self._on_squad_targets(s)
+            elif kind in ("squad_station", "squad_kill", "squad_clear"):
+                await self._on_squad_order(s, kind, msg)
+            elif kind == "inspect_place":
+                await self._on_inspect_place(s, msg)
+            elif kind == "zone_candidates":
+                await self._on_zone_candidates(s)
+            elif kind in ("stockpile_category", "stockpile_containers", "rename_place", "zone_owner", "zone_active",
+                          "workshop_job", "workshop_worker", "farm_crop", "farm_fertilize"):
+                await self._on_place_change(s, kind, msg)
             elif kind == "noble_candidates":
                 await self._on_noble_candidates(s)
+            elif kind == "citizens":
+                await self._on_citizens(s)
+            elif kind == "stocks":
+                await self._on_stocks(s)
+            elif kind == "work_details":
+                await self._on_work_details(s)
+            elif kind in ("work_detail_member", "work_detail_mode"):
+                await self._on_work_detail_change(s, kind, msg)
             elif kind in ("appoint_noble", "vacate_noble"):
                 await self._on_noble_change(s, kind, msg)
             elif kind == "inspect":
@@ -799,6 +993,10 @@ class Hub:
                 self._on_ping(s, msg)
             elif kind == "pause" and isinstance(msg.get("value"), bool):
                 await self._on_pause(s, msg["value"])
+            elif kind == "visibility" and isinstance(msg.get("hidden"), bool):
+                self._on_visibility(s, msg["hidden"])
+            if need in ("dig", "build", "remove"):
+                self._poll_blocks_soon()
         except (DFHackRPCError, OSError) as exc:
             self._note_offline(exc)
             await self._go_offline()
@@ -817,6 +1015,8 @@ class Hub:
         new_levels = s.zs - old
         if new_levels:
             s.last_units = ""  # force a units refresh for the new levels
+            s.last_detail = ""
+            self._poll_blocks_soon()
             self._send_snapshot(s, new_levels)
             self._send(s, self._owners_msg(s))
         self._broadcast_players()
@@ -835,8 +1035,11 @@ class Hub:
                 out["error"] = error
             self._send(s, out)
 
-        if kind not in DIG_KINDS or not all(_is_int(v) for v in coords):
+        detail = kind in DETAIL_KINDS
+        if (kind not in DIG_KINDS and not detail) or not all(_is_int(v) for v in coords):
             return reply(False, error="malformed order")
+        if detail and (not self.lua_ok or self.lua_version < LUA_FOR_DETAIL):
+            return reply(False, error="smoothing needs the host to update the in-game module (hub.py install-lua)")
         if not _is_int(priority) or not 1 <= priority <= 7:
             return reply(False, error="priority must be 1 to 7")
         can_prioritise = self.lua_ok and self.lua_version >= LUA_FOR_PRIORITY
@@ -856,6 +1059,8 @@ class Hub:
             return reply(False, error=f"too big: {area} tiles, the limit is {MAX_DIG_TILES}")
         if not s.limiter.take():
             return reply(False, error="slow down a little")
+        if detail:
+            return await self._detail(s, kind, (ax, ay, bx, by, z), priority, reply)
 
         tiles, skipped = [], 0
         for x in range(ax, bx + 1):
@@ -884,9 +1089,39 @@ class Hub:
             for other in self.sessions.values():
                 if z in other.zs:
                     self._send(other, self._owners_msg(other))
+        if kind == "erase" and self.lua_ok and self.lua_version >= LUA_FOR_DETAIL:
+            # Smoothing marks too, and the jobs DF already made from them.
+            try:
+                r = json.loads((await self._df(self.df.run_lua, "rpc.coop", "detail_erase",
+                                               *map(str, (ax, ay, bx, by, z))))[0])
+                if r.get("cleared"):
+                    self.action_log.append({"type": "detail", "t": round(_time(), 1), "player": s.name,
+                                            "kind": "erase", "rect": [ax, ay, bx, by], "z": z,
+                                            "applied": r["cleared"]})
+                    self._poll_blocks_soon()
+            except DFHackRPCError as exc:
+                log.warning("%s: clearing smoothing marks failed: %s", s.name, exc)
         log.info("%s: %s %dx%d at z%d, priority %d, %d tiles (%d skipped)",
                  s.name, kind, bx - ax + 1, by - ay + 1, z, priority, len(tiles), skipped)
         reply(True, len(tiles), skipped, priority_note)
+
+    async def _detail(self, s: Session, kind: str, area: tuple, priority: int, reply) -> None:
+        """Smooth, engrave or fortify through coop.lua (quickfort decides which tiles qualify)."""
+        ax, ay, bx, by, z = area
+        try:
+            r = json.loads((await self._df(self.df.run_lua, "rpc.coop", "detail", kind,
+                                           *map(str, (ax, ay, bx, by, z, priority))))[0])
+        except DFHackRPCError as exc:
+            log.warning("%s: %s failed in DF: %s", s.name, kind, exc)
+            return reply(False, error="DF refused that")
+        applied, skipped = r.get("applied", 0), r.get("skipped", 0)
+        if applied:
+            self.action_log.append({"type": "detail", "t": round(_time(), 1), "player": s.name, "kind": kind,
+                                    "rect": [ax, ay, bx, by], "z": z, "applied": applied, "priority": priority})
+            self._poll_blocks_soon()
+        log.info("%s: %s %dx%d at z%d, priority %d, %d tiles (%d skipped)",
+                 s.name, kind, bx - ax + 1, by - ay + 1, z, priority, applied, skipped)
+        reply(True, applied, skipped)
 
     # -- building -----------------------------------------------------------------
 
@@ -1054,6 +1289,7 @@ class Hub:
 
     async def _on_edit_order(self, s: Session, msg: dict) -> None:
         oid, amount, freq = msg.get("order"), msg.get("amount"), msg.get("freq")
+        limit = msg.get("max_workshops")
 
         def reply(ok, label=None, error=None):
             out = {"type": "edit_result", "ok": ok, "label": label}
@@ -1063,20 +1299,24 @@ class Hub:
 
         if not _is_int(oid):
             return reply(False, error="malformed order")
-        if amount is None and freq is None:
+        if amount is None and freq is None and limit is None:
             return reply(False, error="nothing to change")
         if amount is not None and (not _is_int(amount) or not 1 <= amount <= MAX_ORDER_AMOUNT):
             return reply(False, error=f"the amount must be 1 to {MAX_ORDER_AMOUNT}")
         if freq is not None and (not isinstance(freq, str) or freq not in ORDER_FREQUENCIES):
             return reply(False, error="that isn't a repeat option")
-        if (problem := self._orders_ready(LUA_FOR_ORDER_EDITS)):
+        if limit is not None and (not _is_int(limit) or not 0 <= limit <= MAX_WORKSHOPS):
+            return reply(False, error=f"the workshop limit must be 0 to {MAX_WORKSHOPS}")
+        if (problem := self._orders_ready(LUA_FOR_ORDER_EDITS if limit is None else LUA_FOR_CONDITIONS)):
             return reply(False, error=problem)
         if not s.limiter.take():
             return reply(False, error="slow down a little")
         label = next((o["label"] for o in self.orders if o["id"] == oid), "that order")
+        args = [str(oid), "" if amount is None else str(amount), freq or ""]
+        if limit is not None:
+            args.append(str(limit))
         try:
-            r = json.loads((await self._df(self.df.run_lua, "rpc.coop", "set_order", str(oid),
-                                           "" if amount is None else str(amount), freq or ""))[0])
+            r = json.loads((await self._df(self.df.run_lua, "rpc.coop", "set_order", *args))[0])
         except DFHackRPCError as exc:
             log.warning("%s: editing order %d failed in DF: %s", s.name, oid, exc)
             return reply(False, label, "DF refused that")
@@ -1087,8 +1327,10 @@ class Hub:
             entry["amount"] = amount
         if freq is not None:
             entry["freq"] = freq
+        if limit is not None:
+            entry["max_workshops"] = limit
         self.action_log.append(entry)
-        log.info("%s: changed order %d (%s): amount=%s freq=%s", s.name, oid, label, amount, freq)
+        log.info("%s: changed order %d (%s): amount=%s freq=%s max_workshops=%s", s.name, oid, label, amount, freq, limit)
         self._orders_due = 0.0
         reply(True, label)
 
@@ -1119,6 +1361,45 @@ class Hub:
         log.info("%s: moved order %d %s", s.name, oid, to)
         self._orders_due = 0.0
         reply(True)
+
+    async def _on_condition(self, s: Session, kind: str, msg: dict) -> None:
+        oid = msg.get("order")
+
+        def reply(ok, label=None, error=None):
+            out = {"type": "condition_result", "ok": ok, "label": label}
+            if error:
+                out["error"] = error
+            self._send(s, out)
+
+        if not _is_int(oid):
+            return reply(False, error="malformed order")
+        args = _condition_args(kind, msg)
+        if isinstance(args, str):
+            return reply(False, error=args)
+        function, *rest = args
+        if (problem := self._orders_ready(LUA_FOR_CONDITIONS)):
+            return reply(False, error=problem)
+        if not s.limiter.take():
+            return reply(False, error="slow down a little")
+        label = next((o["label"] for o in self.orders if o["id"] == oid), "that order")
+        try:
+            r = json.loads((await self._df(self.df.run_lua, "rpc.coop", function, str(oid), *rest))[0])
+        except DFHackRPCError as exc:
+            log.warning("%s: %s on order %d failed in DF: %s", s.name, kind, oid, exc)
+            return reply(False, label, "DF refused that")
+        if not r.get("ok"):
+            self._orders_due = 0.0  # a stale list catches up straight away
+            problem = ("that order is already gone" if r.get("missing")
+                       else "that condition has changed; check the list and try again" if r.get("stale")
+                       else "it already has that condition" if r.get("duplicate")
+                       else "those orders would wait for each other forever" if r.get("loop")
+                       else "DF refused that")
+            return reply(False, label, problem)
+        self.action_log.append({"type": "order_conditions", "t": round(_time(), 1), "player": s.name,
+                                "order_id": oid, "label": label, "change": kind})
+        log.info("%s: %s on order %d (%s)", s.name, kind, oid, label)
+        self._orders_due = 0.0
+        reply(True, label)
 
     # -- squads ---------------------------------------------------------------------
 
@@ -1181,7 +1462,186 @@ class Hub:
         self._squads_due = 0.0
         reply(True, r.get("name"))
 
+    async def _on_squad_targets(self, s: Session) -> None:
+        def reply(ok, units=None, error=None):
+            out = {"type": "squad_targets", "ok": ok}
+            if units is not None:
+                out["units"] = units
+            if error:
+                out["error"] = error
+            self._send(s, out)
+
+        if (problem := self._orders_ready(LUA_FOR_SQUAD_ORDERS)):
+            return reply(False, error=problem)
+        if not s.limiter.take():
+            return reply(False, error="slow down a little")
+        try:
+            raw = json.loads((await self._df(self.df.run_lua, "rpc.coop", "squad_targets"))[0])
+        except DFHackRPCError as exc:
+            log.warning("%s: squad_targets failed in DF: %s", s.name, exc)
+            return reply(False, error="DF refused that")
+        # Only what this player is being shown: no finding ambushers through the list.
+        reply(True, [u for u in raw if u["id"] in s.visible_units])
+
+    def _squad_order_args(self, s: Session, kind: str, msg: dict) -> list[str] | str:
+        """The Lua arguments after the squad id, or why the message is no good."""
+        if kind == "squad_clear":
+            return []
+        if kind == "squad_station":
+            x, y, z = msg.get("x"), msg.get("y"), msg.get("z")
+            if not all(_is_int(v) for v in (x, y, z)):
+                return "malformed request"
+            if not self.df_online:
+                return "the fortress isn't loaded"
+            if not (0 <= x < self.state.width and 0 <= y < self.state.height and 0 <= z < self.state.depth) \
+                    or self.state.is_hidden(x, y, z):
+                return "you can't station a squad there"
+            return [str(x), str(y), str(z)]
+        units = msg.get("units")
+        if not isinstance(units, list) or not units or not all(_is_int(u) for u in units):
+            return "malformed request"
+        if len(units) > MAX_KILL_TARGETS:
+            return f"name {MAX_KILL_TARGETS} targets at most"
+        if not all(u in s.visible_units for u in units):
+            return "you can't see that creature"
+        return [",".join(str(u) for u in units)]
+
+    async def _on_squad_order(self, s: Session, kind: str, msg: dict) -> None:
+        squad = msg.get("squad")
+
+        def reply(ok, error=None):
+            out = {"type": "squad_result", "ok": ok, "action": kind}
+            if error:
+                out["error"] = error
+            self._send(s, out)
+
+        if not _is_int(squad):
+            return reply(False, "malformed request")
+        args = self._squad_order_args(s, kind, msg)
+        if isinstance(args, str):
+            return reply(False, args)
+        if (problem := self._orders_ready(LUA_FOR_SQUAD_ORDERS)):
+            return reply(False, problem)
+        if not s.limiter.take():
+            return reply(False, "slow down a little")
+        try:
+            r = json.loads((await self._df(self.df.run_lua, "rpc.coop", kind, str(squad), *args))[0])
+        except DFHackRPCError as exc:
+            log.warning("%s: %s failed in DF: %s", s.name, kind, exc)
+            return reply(False, "DF refused that")
+        if not r.get("ok"):
+            return reply(False, r.get("why") or "DF refused that")
+        self.action_log.append({"type": kind, "t": round(_time(), 1), "player": s.name, "squad": squad, "args": args})
+        log.info("%s: %s squad %d %s", s.name, kind, squad, args)
+        self._squads_due = 0.0
+        reply(True)
+
     # -- nobles ---------------------------------------------------------------------
+
+    async def _on_citizens(self, s: Session) -> None:
+        def reply(ok, citizens=None, error=None):
+            out = {"type": "citizens", "ok": ok}
+            if ok:
+                out["citizens"] = citizens
+            if error:
+                out["error"] = error
+            self._send(s, out)
+
+        if not self.df_online or not self.lua_ok or self.lua_version < LUA_FOR_CITIZENS:
+            return reply(False, error="the host needs to update the in-game module (hub.py install-lua)")
+        now = asyncio.get_running_loop().time()
+        if now - self._citizens_read >= CITIZENS_CACHE:
+            try:
+                raw = json.loads((await self._df(self.df.run_lua, "rpc.coop", "citizens"))[0])
+            except DFHackRPCError as exc:
+                log.warning("reading citizens failed in DF: %s", exc)
+                return reply(False, error="DF refused that")
+            self._citizens = [_citizen(c) for c in raw] if isinstance(raw, list) else []
+            self._citizens_read = now
+        reply(True, self._citizens)
+
+    async def _on_stocks(self, s: Session) -> None:
+        """Everyone shares one count; a request while DF is being counted waits for it."""
+        if not self.df_online or not self.lua_ok or self.lua_version < LUA_FOR_STOCKS:
+            self._send(s, {"type": "stocks", "ok": False,
+                           "error": "the host needs to update the in-game module (hub.py install-lua)"})
+            return
+        loop = asyncio.get_running_loop()
+        async with self._stocks_lock:
+            if loop.time() - self._stocks_read >= STOCKS_CACHE:
+                try:
+                    raw = json.loads((await self._df(self.df.run_lua, "rpc.coop", "stocks"))[0])
+                except DFHackRPCError as exc:
+                    log.warning("counting stocks failed in DF: %s", exc)
+                    self._send(s, {"type": "stocks", "ok": False, "error": "DF refused that"})
+                    return
+                self._stocks = stock_rows(raw.get("items") or [])
+                self._stocks_read = loop.time()
+        self._send(s, {"type": "stocks", "ok": True, "groups": self._stocks,
+                       "age": round(loop.time() - self._stocks_read)})
+
+    async def _on_work_details(self, s: Session) -> None:
+        def reply(ok, error=None):
+            out = {"type": "work_details", "ok": ok}
+            if ok:
+                out.update(self._work_details)
+            if error:
+                out["error"] = error
+            self._send(s, out)
+
+        if not self.df_online or not self.lua_ok or self.lua_version < LUA_FOR_WORK_DETAILS:
+            return reply(False, "the host needs to update the in-game module (hub.py install-lua)")
+        now = asyncio.get_running_loop().time()
+        if now - self._work_details_read >= CITIZENS_CACHE:
+            try:
+                raw = json.loads((await self._df(self.df.run_lua, "rpc.coop", "work_details"))[0])
+            except DFHackRPCError as exc:
+                log.warning("reading work details failed in DF: %s", exc)
+                return reply(False, "DF refused that")
+            for d in raw.get("details") or []:
+                d["labors"] = [labor_label(t) for t in d.get("labors") or []]
+            self._work_details = {"details": raw.get("details") or [], "people": raw.get("people") or []}
+            self._work_details_read = now
+        reply(True)
+
+    async def _on_work_detail_change(self, s: Session, kind: str, msg: dict) -> None:
+        index, name = msg.get("detail"), msg.get("name")
+
+        def reply(ok, error=None):
+            out = {"type": "work_detail_result", "ok": ok}
+            if error:
+                out["error"] = error
+            self._send(s, out)
+
+        if not _is_int(index) or not isinstance(name, str) or not name or len(name) > MAX_DETAIL_NAME:
+            return reply(False, "malformed work detail")
+        if kind == "work_detail_member":
+            unit, on = msg.get("unit"), msg.get("on")
+            if not _is_int(unit) or not isinstance(on, bool):
+                return reply(False, "malformed change")
+            args = [str(unit), "1" if on else "0"]
+        else:
+            mode = msg.get("mode")
+            if not isinstance(mode, str) or mode not in WORK_DETAIL_MODES:
+                return reply(False, "that isn't a setting")
+            args = [mode]
+        if not self.df_online or not self.lua_ok or self.lua_version < LUA_FOR_WORK_DETAILS:
+            return reply(False, "the host needs to update the in-game module (hub.py install-lua)")
+        if not s.limiter.take():
+            return reply(False, "slow down a little")
+        try:
+            r = json.loads((await self._df(self.df.run_lua, "rpc.coop", kind, str(index), name, *args))[0])
+        except DFHackRPCError as exc:
+            log.warning("%s: %s failed in DF: %s", s.name, kind, exc)
+            return reply(False, "DF refused that")
+        self._work_details_read = float("-inf")
+        if not r.get("ok"):
+            return reply(False, r.get("why") or "DF refused that")
+        entry = {"type": kind, "t": round(_time(), 1), "player": s.name, "detail": name}
+        entry.update({"unit": msg["unit"], "on": msg["on"]} if kind == "work_detail_member" else {"mode": msg["mode"]})
+        self.action_log.append(entry)
+        log.info("%s: %s %s %s", s.name, kind, name, args)
+        reply(True)
 
     async def _on_noble_candidates(self, s: Session) -> None:
         def reply(ok, units=None, error=None):
@@ -1229,6 +1689,126 @@ class Hub:
         log.info("%s: %s %s: %s", s.name, kind, title, r.get("name", ""))
         self._nobles_due = 0.0
         reply(True, r.get("name"))
+
+    # -- stockpiles and zones --------------------------------------------------------
+
+    async def _on_inspect_place(self, s: Session, msg: dict) -> None:
+        pid, x, y, z = msg.get("id"), msg.get("x"), msg.get("y"), msg.get("z")
+
+        def reply(ok, place=None, error=None):
+            out = {"type": "place_info", "ok": ok}
+            if place:
+                out["place"] = place
+            if error:
+                out["error"] = error
+            self._send(s, out)
+
+        if not all(_is_int(v) for v in (pid, x, y, z)):
+            return reply(False, error="malformed request")
+        if (problem := self._orders_ready(LUA_FOR_PLACES)):
+            return reply(False, error=problem)
+        if not (0 <= x < self.state.width and 0 <= y < self.state.height and 0 <= z < self.state.depth) \
+                or self.state.is_hidden(x, y, z):
+            # Same answer as an empty tile: nothing here about unexplored rock.
+            return reply(False, error="nothing to inspect there")
+        if not s.limiter.take():
+            return reply(False, error="slow down a little")
+        r = json.loads((await self._df(self.df.run_lua, "rpc.coop", "place_info",
+                                       str(pid), str(x), str(y), str(z)))[0])
+        if not r.get("found"):
+            return reply(False, error="nothing to inspect there")
+        r.pop("found")
+        reply(True, {**r, "x": x, "y": y})
+
+    async def _on_zone_candidates(self, s: Session) -> None:
+        def reply(ok, units=None, error=None):
+            out = {"type": "zone_candidates", "ok": ok}
+            if units is not None:
+                out["units"] = units
+            if error:
+                out["error"] = error
+            self._send(s, out)
+
+        if (problem := self._orders_ready(LUA_FOR_PLACES)):
+            return reply(False, error=problem)
+        if not s.limiter.take():
+            return reply(False, error="slow down a little")
+        reply(True, json.loads((await self._df(self.df.run_lua, "rpc.coop", "zone_candidates"))[0]))
+
+    def _place_args(self, kind: str, msg: dict) -> list[str] | str:
+        """The Lua arguments after the id, or why the message is no good."""
+        if kind == "stockpile_category":
+            category = msg.get("category")
+            if not isinstance(category, str) or category not in STOCK_CATEGORIES:
+                return "unknown category"
+            if not isinstance(msg.get("on"), bool):
+                return "malformed request"
+            return [category, "1" if msg["on"] else "0"]
+        if kind == "stockpile_containers":
+            counts = [msg.get(k) for k in ("barrels", "bins", "wheelbarrows")]
+            if not all(_is_int(n) for n in counts):
+                return "malformed request"
+            return [str(n) for n in counts]
+        if kind == "rename_place":
+            name = msg.get("name")
+            if not isinstance(name, str):
+                return "malformed request"
+            name = " ".join("".join(c if c.isprintable() else " " for c in name).split())
+            if len(name) > MAX_SQUAD_NAME:
+                return f"keep the name to {MAX_SQUAD_NAME} characters"
+            return [name]
+        if kind == "farm_crop":
+            season, plant = msg.get("season"), msg.get("plant")
+            if not _is_int(season) or not 0 <= season <= 3 or not _is_int(plant) or plant < -1:
+                return "malformed request"
+            return [str(season), str(plant)]
+        if kind == "workshop_job":
+            job, action = msg.get("job"), msg.get("action")
+            if not _is_int(job) or not isinstance(action, str) or action not in WORKSHOP_JOB_ACTIONS:
+                return "malformed request"
+            return [str(job), action]
+        if kind in ("zone_owner", "workshop_worker"):
+            unit = msg.get("unit")
+            if unit is not None and not _is_int(unit):
+                return "malformed request"
+            return ["" if unit is None else str(unit)]
+        if not isinstance(msg.get("on"), bool):       # zone_active, farm_fertilize
+            return "malformed request"
+        return ["1" if msg["on"] else "0"]
+
+    async def _on_place_change(self, s: Session, kind: str, msg: dict) -> None:
+        pid = msg.get("id")
+
+        def reply(ok, name=None, error=None):
+            out = {"type": "place_result", "ok": ok, "action": kind}
+            if name:
+                out["name"] = name
+            if error:
+                out["error"] = error
+            self._send(s, out)
+
+        if not _is_int(pid):
+            return reply(False, error="malformed request")
+        args = self._place_args(kind, msg)
+        if isinstance(args, str):
+            return reply(False, error=args)
+        needs = (LUA_FOR_WORKSHOPS if kind.startswith("workshop_") else LUA_FOR_FARMS if kind.startswith("farm_")
+                 else LUA_FOR_PLACES)
+        if (problem := self._orders_ready(needs)):
+            return reply(False, error=problem)
+        if not s.limiter.take():
+            return reply(False, error="slow down a little")
+        try:
+            r = json.loads((await self._df(self.df.run_lua, "rpc.coop", kind, str(pid), *args))[0])
+        except DFHackRPCError as exc:
+            log.warning("%s: %s failed in DF: %s", s.name, kind, exc)
+            return reply(False, error="DF refused that")
+        if not r.get("ok"):
+            return reply(False, error=r.get("why") or "DF refused that")
+        self.action_log.append({"type": kind, "t": round(_time(), 1), "player": s.name, "place": pid, "args": args})
+        log.info("%s: %s %d %s", s.name, kind, pid, args)
+        reply(True, r.get("name"))
+        broadcast([x.conn for x in self.sessions.values()], json.dumps({"type": "place_changed", "id": pid}))
 
     # -- chat and pings --------------------------------------------------------------
 
@@ -1343,11 +1923,25 @@ class Hub:
                 "catalog": {"pages": PAGES, "page_labels": PAGE_LABELS, "items": [i.public() for i in ITEMS]},
                 "can_build": self.lua_ok, "date": self.date,
                 "order_catalog": {"groups": ORDER_GROUPS, "orders": [o.public() for o in ORDERS],
-                                  "freqs": [{"id": k, "label": v} for k, v in ORDER_FREQUENCIES.items()]},
+                                  "freqs": [{"id": k, "label": v} for k, v in ORDER_FREQUENCIES.items()],
+                                  "compares": [{"id": k, "label": v} for k, v in CONDITION_COMPARES.items()],
+                                  "cond_items": [{"id": k, "label": v} for k, v in CONDITION_ITEMS.items()],
+                                  "cond_whens": [{"id": k, "label": v} for k, v in CONDITION_WHENS.items()]},
                 "can_order": self.lua_ok and self.lua_version >= LUA_FOR_ORDERS, "orders": self.orders,
                 "can_edit_orders": self.lua_ok and self.lua_version >= LUA_FOR_ORDER_EDITS,
+                "can_edit_conditions": self.lua_ok and self.lua_version >= LUA_FOR_CONDITIONS,
                 "can_squads": self.lua_ok and self.lua_version >= LUA_FOR_SQUADS, "squads": self.squads,
+                "can_squad_orders": self.lua_ok and self.lua_version >= LUA_FOR_SQUAD_ORDERS,
+                "can_citizens": self.lua_ok and self.lua_version >= LUA_FOR_CITIZENS,
+                "can_stocks": self.lua_ok and self.lua_version >= LUA_FOR_STOCKS,
+                "can_work_details": self.lua_ok and self.lua_version >= LUA_FOR_WORK_DETAILS,
+                "work_detail_modes": [{"id": k, "label": v} for k, v in WORK_DETAIL_MODES.items()],
                 "can_nobles": self.lua_ok and self.lua_version >= LUA_FOR_NOBLES, "nobles": self.nobles,
+                "can_places": self.lua_ok and self.lua_version >= LUA_FOR_PLACES,
+                "can_detail": self.lua_ok and self.lua_version >= LUA_FOR_DETAIL,
+                "can_workshops": self.lua_ok and self.lua_version >= LUA_FOR_WORKSHOPS,
+                "can_farms": self.lua_ok and self.lua_version >= LUA_FOR_FARMS,
+                "stock_categories": [{"id": k, "label": v} for k, v in STOCK_CATEGORIES.items()],
                 "can_inspect": self.lua_ok and self.lua_version >= LUA_FOR_INFO,
                 "reports": self.reports[-50:], "chat": self.chat}
 
@@ -1390,6 +1984,52 @@ class Hub:
 
 def _is_int(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _citizen(c: dict) -> dict:
+    stress = c.get("stress", -1)
+    out = {"id": c["id"], "name": c.get("name", ""), "profession": c.get("profession", ""),
+           "job": c.get("job", ""), "stress": stress, "squad": c.get("squad", ""),
+           "mood": STRESS_LABELS[stress] if 0 <= stress < len(STRESS_LABELS) else ""}
+    if "x" in c:
+        out.update(x=c["x"], y=c["y"], z=c["z"])
+    return out
+
+
+def _condition_info(cond: dict) -> dict:
+    """What the client needs to edit one condition. No key means read-only."""
+    info = {"key": cond.get("key", "")}
+    if "after" in cond:
+        return info
+    return {**info, "cmp": cond.get("cmp", ""), "val": cond.get("val", 0), "what": condition_what(cond)}
+
+
+def _condition_args(kind: str, msg: dict) -> list | str:
+    """The Lua function and arguments for a condition change, or what's wrong
+    with it. Nothing from a player reaches DF unchecked."""
+    key = msg.get("key")
+    if kind != "add_condition" and (not isinstance(key, str) or not key or len(key) > MAX_CONDITION_KEY):
+        return "malformed condition"
+    if kind == "remove_condition":
+        return ["remove_condition", key]
+    if kind == "add_condition" and "after" in msg:
+        after, when = msg.get("after"), msg.get("when")
+        if not _is_int(after):
+            return "malformed order"
+        if not isinstance(when, str) or when not in CONDITION_WHENS:
+            return "that isn't an order state"
+        return ["add_order_condition", str(after), when]
+    cmp, val = msg.get("cmp"), msg.get("val")
+    if not isinstance(cmp, str) or cmp not in CONDITION_COMPARES:
+        return "that isn't a comparison"
+    if not _is_int(val) or not 0 <= val <= MAX_CONDITION_VALUE:
+        return f"the number must be 0 to {MAX_CONDITION_VALUE}"
+    if kind == "edit_condition":
+        return ["edit_condition", key, cmp, str(val)]
+    item = msg.get("item")
+    if not isinstance(item, str) or item not in CONDITION_ITEMS:
+        return "that item can't be used in a condition"
+    return ["add_item_condition", item, cmp, str(val)]
 
 
 def fort_key(info) -> str:
