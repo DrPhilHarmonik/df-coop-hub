@@ -159,7 +159,7 @@ def launch() -> None:
     env.pop("WAYLAND_DISPLAY", None)
     with open(BENCH / "run.log", "w") as out:
         # Low priority: whoever is playing the real game comes first.
-        df = subprocess.Popen(["nice", "-n", "15", "./dfhack"], cwd=INSTALL, env=env, stdout=out, stderr=out,
+        df = subprocess.Popen(["nice", "-n", os.environ.get("DF_BENCH_NICE", "15"), "./dfhack"], cwd=INSTALL, env=env, stdout=out, stderr=out,
                               stdin=subprocess.DEVNULL, start_new_session=True)
     PIDS.write_text(json.dumps({"xvfb": xvfb.pid, "df": _find_df_pid(df.pid)}))
 
@@ -1011,6 +1011,115 @@ return out
                 f"{info['fertilize']} -> {reloaded['fertilize']}")
 
 
+# Tiles near a citizen that one of the smoothing kinds applies to, as quickfort would judge:
+# rough stone floor (smooth), smooth unengraved floor (engrave), smooth wall (fortify).
+DETAIL_TARGETS = """
+local engraved = {}
+for _, e in ipairs(df.global.world.event.engravings) do
+    engraved[e.pos.x .. ',' .. e.pos.y .. ',' .. e.pos.z] = true
+end
+local function kind_of(x, y, z)
+    local tt = dfhack.maps.getTileType(x, y, z)
+    local f = dfhack.maps.getTileFlags(x, y, z)
+    if not tt or not f or f.hidden or f.smooth ~= 0 or f.dig ~= 0 then return nil end
+    if dfhack.buildings.findAtTile(xyz2pos(x, y, z)) then return nil end
+    local a = df.tiletype.attrs[tt]
+    if a.material ~= df.tiletype_material.STONE and a.material ~= df.tiletype_material.MINERAL then return nil end
+    if a.shape == df.tiletype_shape.FLOOR and a.special == df.tiletype_special.NORMAL then return 'smooth' end
+    if a.shape == df.tiletype_shape.FLOOR and a.special == df.tiletype_special.SMOOTH
+            and not engraved[x .. ',' .. y .. ',' .. z] then return 'engrave' end
+    if a.shape == df.tiletype_shape.WALL and a.special == df.tiletype_special.SMOOTH then return 'fortify' end
+end
+local found = {}
+for _, u in ipairs(dfhack.units.getCitizens(true)) do
+    local group = dfhack.maps.getWalkableGroup(u.pos)
+    for dx = -12, 12 do for dy = -12, 12 do
+        local x, y, z = u.pos.x + dx, u.pos.y + dy, u.pos.z
+        local k = kind_of(x, y, z)
+        if k and not found[k] then
+            local near = false
+            for ax = -1, 1 do for ay = -1, 1 do
+                if dfhack.maps.getWalkableGroup(xyz2pos(x + ax, y + ay, z)) == group then near = true end
+            end end
+            if near then found[k] = {x=x, y=y, z=z} end
+        end
+    end end
+    if found.smooth and found.engrave and found.fortify then break end
+end
+return found
+"""
+
+DETAIL_JOBS_AT = """
+local want = {{}}
+for _, t in ipairs({tiles}) do want[t[1] .. ',' .. t[2] .. ',' .. t[3]] = true end
+local out = {{}}
+local link = df.global.world.jobs.list.next
+while link do
+    local j = link.item
+    if j and want[j.pos.x .. ',' .. j.pos.y .. ',' .. j.pos.z] then
+        out[#out + 1] = {{j.pos.x, j.pos.y, j.pos.z, df.job_type[j.job_type]}}
+    end
+    link = link.next
+end
+return out
+"""
+
+DETAIL_JOB_KIND = {"SmoothFloor": "smooth", "SmoothWall": "smooth", "DetailFloor": "engrave",
+                   "DetailWall": "engrave", "CarveFortification": "fortify"}
+
+
+def scenario_detail(df: DFHackRPC) -> tuple[bool, str]:
+    """Smooth, engrave and fortify marks made through coop.lua become DF's own jobs of the right
+    kind on those tiles, the hub's mark reader sees them, they survive a save and reload, and
+    erase cancels them for good. (Whether dwarves do them can't be shown here: no job from DF's
+    posting board is ever claimed on the bench; see ROADMAP.md.)"""
+    targets = lua_json(DETAIL_TARGETS)
+    if not isinstance(targets, dict) or not targets:
+        return False, f"no tiles to try: {targets}"
+    log(f"targets {targets}")
+    tiles = []
+    for kind, t in targets.items():
+        answer = coop(df, "detail", kind, t["x"], t["y"], t["x"], t["y"], t["z"], 3)
+        if not answer.get("ok") or answer.get("applied") != 1:
+            return False, f"{kind} at {t}: {answer}"
+        tiles.append((t["x"], t["y"], t["z"], kind))
+    spec = "{" + ",".join(f"{{{x},{y},{z}}}" for x, y, z, _ in tiles) + "}"
+    run_game(df, 3, lambda: False, every=1)
+    jobs = lua_json(DETAIL_JOBS_AT.format(tiles=spec)) or []
+    made = {(x, y, z): DETAIL_JOB_KIND.get(name, name) for x, y, z, name in jobs}
+    want = {(x, y, z): kind for x, y, z, kind in tiles}
+    levels = ",".join(sorted({str(z) for _, _, z, _ in tiles}))
+    marks = coop(df, "detail_marks", levels)
+    seen = {(x, y, int(z)): k for z, rows in (marks.items() if isinstance(marks, dict) else []) for x, y, k in rows}
+    log(f"jobs {made}; marks read back {seen}")
+    save_now()
+    reload_fort()
+    fresh = connect()
+    try:
+        after = coop(fresh, "detail_marks", levels)
+        reloaded = {(x, y, int(z)): k for z, rows in (after.items() if isinstance(after, dict) else [])
+                    for x, y, k in rows}
+        xs, ys = [x for x, _, _, _ in tiles], [y for _, y, _, _ in tiles]
+        z0 = tiles[0][2]
+        cleared = []
+        for z in sorted({z for _, _, z, _ in tiles}):
+            same = [(x, y) for x, y, tz, _ in tiles if tz == z]
+            cleared.append(coop(fresh, "detail_erase", min(x for x, _ in same), min(y for _, y in same),
+                                max(x for x, _ in same), max(y for _, y in same), z).get("cleared", 0))
+        run_game(fresh, 3, lambda: False, every=1)
+        left = lua_json(DETAIL_JOBS_AT.format(tiles=spec)) or []
+        left_marks = coop(fresh, "detail_marks", levels)
+    finally:
+        fresh.close()
+    gone = not [j for j in left if j[3] in DETAIL_JOB_KIND] and not (isinstance(left_marks, dict) and
+                                                                      any(left_marks.values()))
+    ok = (made == want and all(seen.get(k) == v for k, v in want.items())
+          and all(reloaded.get(k) == v for k, v in want.items()) and sum(cleared) >= len(want) and gone)
+    return ok, (f"marked {want}; DF made jobs {made}; read back {seen}; after reload {reloaded}; erase cleared "
+                f"{cleared}, jobs left {left}, marks left {left_marks} (z{z0}, x {min(xs)}-{max(xs)}, "
+                f"y {min(ys)}-{max(ys)})")
+
+
 def scenario_hub(df: DFHackRPC) -> tuple[bool, str]:
     """A real hub and browser on the bench: Space pauses and resumes DF, and a save doesn't
     knock players offline."""
@@ -1062,7 +1171,7 @@ def scenario_hub(df: DFHackRPC) -> tuple[bool, str]:
                 f"{offline_ticks * 0.2:.1f}s, hub log shows a drop: {dropped}; page errors {errors}")
 
 
-SCENARIOS = {"hub": scenario_hub, "farm": scenario_farm, "workshop": scenario_workshop, "workdetail": scenario_workdetail, "station": scenario_station, "kill": scenario_kill, "squad": scenario_squad,
+SCENARIOS = {"hub": scenario_hub, "detail": scenario_detail, "farm": scenario_farm, "workshop": scenario_workshop, "workdetail": scenario_workdetail, "station": scenario_station, "kill": scenario_kill, "squad": scenario_squad,
              "conditions": scenario_conditions, "noble": scenario_noble}
 
 

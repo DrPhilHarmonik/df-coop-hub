@@ -96,6 +96,7 @@ Keys follow Steam Dwarf Fortress's defaults (`data/init/interface.txt`), so DF p
 | `[` / `]`, Ctrl + wheel, pinch | zoom | `[` `]` |
 | `Space` | pause; resumes when everyone who paused is ready | pause |
 | `m`, then `m` `u` `t` `r` | dig, channel, stairs (`t` again: down, then up stairs), ramp | dig menu |
+| `m`, then `v` (`i`, `f`) | smooth (`v` again: engrave, then fortify) | dig menu |
 | `p` / `P` in the dig menu, or the − + buttons | designation priority: 1 is done first, 7 last (default 4) | same |
 | `x` | erase designations | same |
 | `b`, then DF's menu letters | build: the same pages and letters as DF's build menu, e.g. `b o f p` farm plot, `b p r` door, `b o u l` smelter | same |
@@ -113,6 +114,8 @@ Keys follow Steam Dwarf Fortress's defaults (`data/init/interface.txt`), so DF p
 Designations take two corners (clicks, taps, or `Enter` at each corner). Workshops centre on the click. On phones, the ▼ ▲ buttons change level and ☰ opens the side panel.
 
 Designations carry DF's priority (1 first, 7 last). Tiles show their number when it isn't the default 4, and the hover says who placed them and at what priority. Priority updates require in-game module v7: run `python3 hub.py install-lua` after upgrading. Older modules still allow default-priority digging, but do not receive priority updates; DF may retain an old priority on a re-designated tile.
+
+Smooth, engrave and fortify work the same way: drag a rectangle and DFHack's quickfort marks the tiles that qualify (rough natural stone to smooth, smooth floors and walls to engrave, smooth walls to fortify) at the priority you picked, and tells you how many it skipped. DF turns each mark into a job almost at once; the map shows them with a coloured outline (blue smooth, gold engrave, purple fortify) until the work is done, and Erase cancels them. Someone has to be on the Engravers work detail for the work to happen. These need in-game module v20.
 
 The hub only applies a designation where DF would accept it (rock for digging, floors for channels and down stairs, never constructions, trees or open air) and tells you how many tiles were skipped. Unexplored tiles take any designation, as in DF.
 

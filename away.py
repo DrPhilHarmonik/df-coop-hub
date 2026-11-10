@@ -49,7 +49,8 @@ def summarize_actions(entries, since: float, me: str) -> list[str]:
     per: dict[str, dict] = defaultdict(lambda: {"dug": 0, "cleared": 0, "built": Counter(), "removed": Counter(),
                                                 "ordered": Counter(), "cancelled": 0, "changed": set(),
                                                 "squads": set(), "posts": set(), "places": set(), "details": set(),
-                                                "workshops": set(), "farms": set()})
+                                                "workshops": set(), "farms": set(), "detailed": 0,
+                                                "undetailed": 0})
     for e in entries:
         who = e.get("player")
         if not who or who == me or e.get("t", 0) <= since:
@@ -83,6 +84,8 @@ def summarize_actions(entries, since: float, me: str) -> list[str]:
             p["places"].add(e.get("place"))
         elif kind in ("workshop_job", "workshop_worker"):
             p["workshops"].add(e.get("place"))
+        elif kind == "detail":
+            p["undetailed" if e.get("kind") == "erase" else "detailed"] += e.get("applied", 0)
         elif kind in ("farm_crop", "farm_fertilize"):
             p["farms"].add(e.get("place"))
     lines = []
@@ -115,6 +118,10 @@ def summarize_actions(entries, since: float, me: str) -> list[str]:
         if p["workshops"]:
             n = len(p["workshops"])
             parts.append(f"changed tasks or workers at {n} workshop{'s' if n > 1 else ''}")
+        if p["detailed"]:
+            parts.append(f"marked {p['detailed']} tiles to smooth, engrave or fortify")
+        if p["undetailed"]:
+            parts.append(f"cleared {p['undetailed']} smoothing marks")
         if p["farms"]:
             n = len(p["farms"])
             parts.append(f"changed {n} farm plot{'s' if n > 1 else ''}")

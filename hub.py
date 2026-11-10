@@ -69,6 +69,8 @@ Messages, hub to player (JSON):
                                             fertilize, autofarm (DFHack's, picks crops itself),
                                             season (0 spring), crops [{id, name}] x4,
                                             options [[{id, name, seeds}]] x4
+    detail_marks {marks: [[x, y, z, k]]}   smoothing (s), engraving (e) and fortification
+                                            (f) marks on the player's levels, when they change
     place_changed {id}        someone changed it; ask again if it's on screen
     zone_candidates {ok, units?: [{id, name}], error?}
     place_result {ok, action, name?, error?}
@@ -81,7 +83,8 @@ Messages, hub to player (JSON):
 Player to hub:
     view       {z, cx, cy}    level being viewed and cursor tile
     dig        {kind, x1, y1, x2, y2, z, priority?}   kind: dig updown up down
-                                           ramp channel erase (actions.py);
+                                           ramp channel erase, or smooth engrave
+                                           fortify (module v20; erase clears them too);
                                            priority 1 (first) to 7, default 4
     pause      {value}        true: pause and hold; false: ready to resume
     visibility {hidden}       their tab went to the background or came back
@@ -163,7 +166,7 @@ from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request, Response
 
 from away import AWAY_MIN_SECONDS, SeenStore, summarize_actions
-from actions import (DEFAULT_ROLE, DIG_KINDS, MAX_DIG_TILES, NEEDS, ROLES, VERB, ActionLog,
+from actions import (DEFAULT_ROLE, DETAIL_KINDS, DIG_KINDS, MAX_DIG_TILES, NEEDS, ROLES, VERB, ActionLog,
                      Owners, RateLimiter, color_for, designation_spans, eligible, rect_tiles)
 from catalog import (BY_ID, CONDITION_COMPARES, CONDITION_ITEMS, CONDITION_WHENS, MAX_CONDITION_VALUE, MAX_WORKSHOPS,
                      PAGE_LABELS, PAGES, ITEMS, MAX_AREA_SIDE, MAX_ORDER_AMOUNT, ORDER_FREQUENCIES,
@@ -186,7 +189,7 @@ CONFIG_PATH = Path(os.environ.get("DF_COOP_CONFIG", Path.home() / ".config/df-co
 DATA_DIR = Path(os.environ.get("DF_COOP_DATA", Path.home() / ".local/share/df-coop"))
 DF_DIR = Path(os.environ.get("DF_DIR", Path.home() / ".local/share/Steam/steamapps/common/Dwarf Fortress"))
 LUA_SOURCE = HERE / "lua" / "rpc" / "coop.lua"
-LUA_VERSION = 19
+LUA_VERSION = 20
 LUA_FOR_REMOVE = 2     # the oldest module each feature works with
 LUA_FOR_ORDERS = 3
 LUA_FOR_INFO = 4       # announcements and the unit inspector
@@ -204,6 +207,7 @@ LUA_FOR_WORKSHOPS = 16
 LUA_FOR_STOCKS = 17
 LUA_FOR_FARMS = 18
 LUA_FOR_UNITS = 19   # creatures through coop.lua: about a quarter of RFR's cost
+LUA_FOR_DETAIL = 20  # smooth, engrave, fortify
 MAX_KILL_TARGETS = 50
 MAX_SQUAD_NAME = 40
 KEEP_REPORTS = 100
@@ -318,6 +322,7 @@ class Session:
     cy: int = -1
     hidden: bool = False  # their browser tab is in the background
     last_units: str = field(default="", repr=False)
+    last_detail: str = field(default="", repr=False)
     role: str = DEFAULT_ROLE
     graphics: bool = False
     limiter: RateLimiter = field(default_factory=RateLimiter, repr=False)
@@ -570,6 +575,25 @@ class Hub:
             self.nobles = nobles
             broadcast([s.conn for s in self.sessions.values()], json.dumps({"type": "nobles", "nobles": nobles}))
 
+    async def _poll_detail_marks(self) -> None:
+        """Smoothing marks on players' levels; sent to each player only when theirs change."""
+        if not self.lua_ok or self.lua_version < LUA_FOR_DETAIL:
+            return
+        levels = sorted({z for s in self.sessions.values() for z in s.zs if 0 <= z < self.state.depth})
+        if not levels:
+            return
+        raw = json.loads((await self._df(self.df.run_lua, "rpc.coop", "detail_marks",
+                                         ",".join(map(str, levels))))[0])
+        by_z = raw if isinstance(raw, dict) else {}
+        letters = {"smooth": "s", "engrave": "e", "fortify": "f"}
+        for s in list(self.sessions.values()):
+            mine = sorted([x, y, int(z), letters.get(k, "s")] for z, marks in by_z.items() if int(z) in s.zs
+                          for x, y, k in marks)
+            msg = json.dumps({"type": "detail_marks", "marks": mine})
+            if msg != s.last_detail:
+                s.last_detail = msg
+                self._send_raw(s, msg)
+
     async def poll_blocks(self) -> None:
         wanted = set()
         for s in self.sessions.values():
@@ -605,6 +629,7 @@ class Hub:
         if buildings_changed:
             for s in self.sessions.values():
                 self._send(s, self._buildings_msg(s))
+        await self._poll_detail_marks()
 
     def _poll_blocks_soon(self) -> None:
         """Read the map soon, for a change a player is waiting to see."""
@@ -990,6 +1015,7 @@ class Hub:
         new_levels = s.zs - old
         if new_levels:
             s.last_units = ""  # force a units refresh for the new levels
+            s.last_detail = ""
             self._poll_blocks_soon()
             self._send_snapshot(s, new_levels)
             self._send(s, self._owners_msg(s))
@@ -1009,8 +1035,11 @@ class Hub:
                 out["error"] = error
             self._send(s, out)
 
-        if kind not in DIG_KINDS or not all(_is_int(v) for v in coords):
+        detail = kind in DETAIL_KINDS
+        if (kind not in DIG_KINDS and not detail) or not all(_is_int(v) for v in coords):
             return reply(False, error="malformed order")
+        if detail and (not self.lua_ok or self.lua_version < LUA_FOR_DETAIL):
+            return reply(False, error="smoothing needs the host to update the in-game module (hub.py install-lua)")
         if not _is_int(priority) or not 1 <= priority <= 7:
             return reply(False, error="priority must be 1 to 7")
         can_prioritise = self.lua_ok and self.lua_version >= LUA_FOR_PRIORITY
@@ -1030,6 +1059,8 @@ class Hub:
             return reply(False, error=f"too big: {area} tiles, the limit is {MAX_DIG_TILES}")
         if not s.limiter.take():
             return reply(False, error="slow down a little")
+        if detail:
+            return await self._detail(s, kind, (ax, ay, bx, by, z), priority, reply)
 
         tiles, skipped = [], 0
         for x in range(ax, bx + 1):
@@ -1058,9 +1089,39 @@ class Hub:
             for other in self.sessions.values():
                 if z in other.zs:
                     self._send(other, self._owners_msg(other))
+        if kind == "erase" and self.lua_ok and self.lua_version >= LUA_FOR_DETAIL:
+            # Smoothing marks too, and the jobs DF already made from them.
+            try:
+                r = json.loads((await self._df(self.df.run_lua, "rpc.coop", "detail_erase",
+                                               *map(str, (ax, ay, bx, by, z))))[0])
+                if r.get("cleared"):
+                    self.action_log.append({"type": "detail", "t": round(_time(), 1), "player": s.name,
+                                            "kind": "erase", "rect": [ax, ay, bx, by], "z": z,
+                                            "applied": r["cleared"]})
+                    self._poll_blocks_soon()
+            except DFHackRPCError as exc:
+                log.warning("%s: clearing smoothing marks failed: %s", s.name, exc)
         log.info("%s: %s %dx%d at z%d, priority %d, %d tiles (%d skipped)",
                  s.name, kind, bx - ax + 1, by - ay + 1, z, priority, len(tiles), skipped)
         reply(True, len(tiles), skipped, priority_note)
+
+    async def _detail(self, s: Session, kind: str, area: tuple, priority: int, reply) -> None:
+        """Smooth, engrave or fortify through coop.lua (quickfort decides which tiles qualify)."""
+        ax, ay, bx, by, z = area
+        try:
+            r = json.loads((await self._df(self.df.run_lua, "rpc.coop", "detail", kind,
+                                           *map(str, (ax, ay, bx, by, z, priority))))[0])
+        except DFHackRPCError as exc:
+            log.warning("%s: %s failed in DF: %s", s.name, kind, exc)
+            return reply(False, error="DF refused that")
+        applied, skipped = r.get("applied", 0), r.get("skipped", 0)
+        if applied:
+            self.action_log.append({"type": "detail", "t": round(_time(), 1), "player": s.name, "kind": kind,
+                                    "rect": [ax, ay, bx, by], "z": z, "applied": applied, "priority": priority})
+            self._poll_blocks_soon()
+        log.info("%s: %s %dx%d at z%d, priority %d, %d tiles (%d skipped)",
+                 s.name, kind, bx - ax + 1, by - ay + 1, z, priority, applied, skipped)
+        reply(True, applied, skipped)
 
     # -- building -----------------------------------------------------------------
 
@@ -1877,6 +1938,7 @@ class Hub:
                 "work_detail_modes": [{"id": k, "label": v} for k, v in WORK_DETAIL_MODES.items()],
                 "can_nobles": self.lua_ok and self.lua_version >= LUA_FOR_NOBLES, "nobles": self.nobles,
                 "can_places": self.lua_ok and self.lua_version >= LUA_FOR_PLACES,
+                "can_detail": self.lua_ok and self.lua_version >= LUA_FOR_DETAIL,
                 "can_workshops": self.lua_ok and self.lua_version >= LUA_FOR_WORKSHOPS,
                 "can_farms": self.lua_ok and self.lua_version >= LUA_FOR_FARMS,
                 "stock_categories": [{"id": k, "label": v} for k, v in STOCK_CATEGORIES.items()],

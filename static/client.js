@@ -35,7 +35,7 @@ const st = {
 
 // toolbar mode -> the permission it needs
 const MODE_NEEDS = { dig: "dig", channel: "dig", updown: "dig", down: "dig", up: "dig", ramp: "dig",
-                     erase: "dig", remove: "remove", build: "build", ping: "chat", station: "military" };
+                     smooth: "dig", engrave: "dig", fortify: "dig", erase: "dig", remove: "remove", build: "build", ping: "chat", station: "military" };
 const PING_MS = 4000;
 const graphics = { mode: "text", sprites: {}, layouts: {}, pages: new Map() };
 
@@ -169,7 +169,13 @@ const MODE_COLORS = { dig: "#e0b050", channel: "#5aa0ff", updown: "#c080ff", dow
                       up: "#c080ff", ramp: "#80d080", erase: "#ff6666" };
 // Steam DF's defaults: m opens the dig menu; inside it u channel, t stairs
 // (pressing t again cycles the stair kind, as DF's stair tool does), r ramp.
-const DIG_FAMILY = new Set(["dig", "channel", "updown", "down", "up", "ramp"]);
+const DIG_FAMILY = new Set(["dig", "channel", "updown", "down", "up", "ramp", "smooth", "engrave", "fortify"]);
+// Smoothing marks come from the hub as letters; DF turns them into jobs at once, so the hub
+// reads them back from the jobs and they stay drawn until the work is done.
+const DETAIL_MODES = { v: "smooth", i: "engrave", f: "fortify" };
+const DETAIL_CYCLE = ["smooth", "engrave", "fortify"];
+const DETAIL_NAMES = { smooth: "Smooth", engrave: "Engrave", fortify: "Fortify" };
+const DETAIL_STYLE = { s: ["#8fd3ff", "s"], e: ["#ffcf6b", "e"], f: ["#c9a2ff", "f"] };
 const STAIR_CYCLE = ["updown", "down", "up"];
 
 // -- token -------------------------------------------------------------------
@@ -255,6 +261,8 @@ function onMessage(m) {
       st.canWorkDetails = m.can_work_details; st.detailModes = m.work_detail_modes || [];
       if (st.detailsOpen) askDetails();
       st.canPlaces = m.can_places; st.stockCategories = m.stock_categories || [];
+      st.canDetail = !!m.can_detail;
+      for (const btn of document.querySelectorAll("[data-detail]")) btn.hidden = !st.canDetail;
       st.canWorkshops = !!m.can_workshops; st.canFarms = !!m.can_farms; renderPlace();
       renderOrderForm(); renderOrders();
       st.canInspect = m.can_inspect; st.reports = m.reports || []; renderReports();
@@ -418,10 +426,15 @@ function onMessage(m) {
       else if (m.outcome === "already") toast(`${m.what} is already marked for removal`);
       else toast(`Removed ${m.what}`);
       break;
+    case "detail_marks":
+      st.detailMarks = new Map(m.marks.map(([x, y, z, k]) => [`${x},${y},${z}`, k]));
+      break;
     case "dig_result":
       if (!m.ok) toast(m.error || "that didn't work", true);
       else if (!m.applied) toast("Nothing there can take that; no tiles changed", true);
-      else toast(`${m.kind === "erase" ? "Cleared" : "Designated"} ${m.applied} tile${m.applied === 1 ? "" : "s"}` +
+      else toast(`${m.kind === "erase" ? "Cleared" : m.kind === "smooth" ? "Marked to smooth"
+                    : m.kind === "engrave" ? "Marked to engrave" : m.kind === "fortify" ? "Marked to fortify"
+                    : "Designated"} ${m.applied} tile${m.applied === 1 ? "" : "s"}` +
                  (m.kind !== "erase" && m.priority && m.priority !== 4 ? ` at priority ${m.priority}` : "") +
                  (m.skipped ? `, ${m.skipped} skipped` : "") + (m.error ? ` (${m.error})` : ""), !!m.error);
       break;
@@ -558,6 +571,24 @@ function glyph(ch, x, y, color, alpha) {
   ctx.fillText(ch, x + st.cell / 2, y + st.cell / 2 + 1);
 }
 
+function detailMark(x, y, px, py, size) {
+  const k = st.detailMarks && st.detailMarks.get(`${x},${y},${st.z}`);
+  if (!k) return;
+  const [color, letter] = DETAIL_STYLE[k] || DETAIL_STYLE.s;
+  ctx.globalAlpha = 0.9;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1, size / 12);
+  const inset = Math.max(1, size / 8);
+  ctx.strokeRect(px + inset, py + inset, size - 2 * inset, size - 2 * inset);
+  if (size >= 12) {
+    ctx.fillStyle = color;
+    ctx.font = `${Math.round(size * 0.42)}px "DejaVu Sans Mono", monospace`;
+    ctx.fillText(letter, px + size * 0.22, py + size * 0.26);
+    ctx.font = `${Math.round(size * 0.95)}px "DejaVu Sans Mono", Menlo, monospace`;
+  }
+  ctx.globalAlpha = 1;
+}
+
 function designation(tile, x, y, px, py, size) {
   if (!tile.d) return;
   const owner = st.owners.get(`${x},${y},${st.z}`);
@@ -619,6 +650,7 @@ function draw() {
         glyph(String(tile.m || tile.w), px, py, tile.m ? "#ff4400" : "#4a8cff", 1);
       }
       designation(tile, x, y, px, py, c);
+      detailMark(x, y, px, py, c);
     }
   }
 
@@ -853,6 +885,14 @@ window.addEventListener("keydown", (e) => {
     setPriority(st.priority + (k === "p" ? -1 : 1));
     return;
   }
+  else if (DIG_FAMILY.has(st.mode) && DETAIL_MODES[k]) {
+    if (!st.canDetail) { toast("Smoothing needs the host to update the in-game module", true); return; }
+    // v cycles like Stairs: smooth, engrave, fortify.
+    const mode = k === "v" && DETAIL_CYCLE.includes(st.mode)
+      ? DETAIL_CYCLE[(DETAIL_CYCLE.indexOf(st.mode) + 1) % DETAIL_CYCLE.length] : DETAIL_MODES[k];
+    setMode(mode);
+    return;
+  }
   else if (DIG_FAMILY.has(st.mode) && (k === "u" || k === "r" || k === "t")) {
     if (k === "u") setMode("channel");
     else if (k === "r") setMode("ramp");
@@ -1023,6 +1063,11 @@ function setMode(mode) {
   st.corner = null;
   if (mode !== "build") st.buildItem = null;
   if (mode !== "station") st.stationSquad = null;
+  if (DETAIL_CYCLE.includes(mode)) {
+    // One button for the three: it shows and sends whichever is chosen.
+    $("detailbtn").dataset.mode = mode;
+    $("detailname").textContent = DETAIL_NAMES[mode];
+  }
   for (const btn of document.querySelectorAll("#toolbar [data-mode]"))
     btn.classList.toggle("on", btn.dataset.mode === mode);
   renderBuildButton();
@@ -1095,7 +1140,13 @@ function pickCorner() {
 }
 
 for (const btn of document.querySelectorAll("#toolbar [data-mode]"))
-  btn.onclick = () => { closePalette(); setMode(btn.dataset.mode); };
+  btn.onclick = () => {
+    closePalette();
+    const mode = btn.dataset.mode;
+    if (btn.id === "detailbtn" && st.mode === mode)
+      setMode(DETAIL_CYCLE[(DETAIL_CYCLE.indexOf(mode) + 1) % DETAIL_CYCLE.length]);
+    else setMode(mode);
+  };
 
 // -- while you were away --
 

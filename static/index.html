@@ -308,7 +308,8 @@
   <button data-mode="down" title="Downward stairs (m, then t t)">Down ▼<kbd>t</kbd></button>
   <button data-mode="up" title="Upward stairs (m, then t t t)">Up ▲<kbd>t</kbd></button>
   <button data-mode="ramp" title="Ramp (m, then r)">Ramp<kbd>r</kbd></button>
-  <button data-mode="erase" title="Remove designations (x)">Erase<kbd>x</kbd></button>
+  <button id="detailbtn" data-mode="smooth" data-detail hidden title="Smooth rough stone; again for engrave, then fortify (m, then v; i engrave, f fortify)"><span id="detailname">Smooth</span><kbd>v</kbd></button>
+  <button data-mode="erase" title="Remove designations, smoothing marks included (x)">Erase<kbd>x</kbd></button>
   <span id="prio" hidden title="Designation priority: 1 is done first, 7 last (DF's default is 4)">Priority
     <button id="priominus" title="More urgent (p)">−</button><b id="prioval">4</b><button id="prioplus" title="Less urgent (P)">+</button><kbd>p P</kbd></span>
   <span class="sep"></span>
@@ -376,7 +377,7 @@
       <kbd>Space</kbd> pause · <kbd>Esc</kbd> back / cancel<br>
       Click a player to jump to their view<br>
       Click a creature to inspect it; click an announcement to go there<br>
-      <kbd>m</kbd> dig, then <kbd>u</kbd> channel, <kbd>t</kbd> stairs (again: down, up), <kbd>r</kbd> ramp, <kbd>m</kbd> dig; <kbd>x</kbd> erase<br>
+      <kbd>m</kbd> dig, then <kbd>u</kbd> channel, <kbd>t</kbd> stairs (again: down, up), <kbd>r</kbd> ramp, <kbd>v</kbd> smooth, <kbd>i</kbd> engrave, <kbd>f</kbd> fortify, <kbd>m</kbd> dig; <kbd>x</kbd> erase<br>
       In the dig menu, <kbd>p</kbd> / <kbd>P</kbd>: priority up / down (1 is done first)<br>
       Click two corners, or <kbd>Enter</kbd> at each corner<br>
       <kbd>b</kbd> build, with DF's menu letters: <kbd>b</kbd><kbd>o</kbd><kbd>f</kbd><kbd>p</kbd> farm plot, <kbd>b</kbd><kbd>p</kbd><kbd>r</kbd> door<br>

@@ -31,6 +31,8 @@ DIG_KINDS = {
     "erase": rfr.NO_DIG,
 }
 DIG_NAMES = {v: k for k, v in DIG_KINDS.items()}
+# Smoothing and the like go through coop.lua (quickfort), not RFR's dig command.
+DETAIL_KINDS = ("smooth", "engrave", "fortify")
 
 MAX_DIG_TILES = 4096
 

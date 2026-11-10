@@ -39,7 +39,7 @@ dfhack = {isMapLoaded=function() return true end, maps={
 }}
 assert(loadfile(arg[1]))()
 module.to_json = require('json').encode   -- keep results as tables to look at
-assert(module.ping() == '19')
+assert(module.ping() == '20')
 decoded = {{2,3,3}, {2,5,6}, {3,4,4}}
 assert(module.set_priority_spans('fixture', '5', '1') == 3)
 assert(event.priority[2][3] == 1000 and event.priority[2][5] == 1000 and event.priority[2][6] == 1000)
@@ -1262,3 +1262,101 @@ print(pcall(J, {print}))
     assert json.loads(lines[4]) == "Ürist ☼ mead"
     assert json.loads(lines[5]) == [None, None, None, 1e20, 123456789012]
     assert lines[6].startswith("false") and "cannot send a function" in lines[6]
+
+
+SMOOTH_FIXTURE = r"""
+local module = setmetatable({}, {__index=_G})
+function mkmodule() return module end
+package.preload.json = function() return {encode=function(v) return v end} end
+blueprints = {}
+function reqscript(name)
+    assert(name == 'quickfort')
+    return {apply_blueprint=function(opts)
+        table.insert(blueprints, opts)
+        return {dig_designated={value=5}, dig_invalid_tiles={value=2}, dig_protected_engraving={value=1}}
+    end}
+end
+-- a 2x1-block map, one level (z 5); flags per tile; one smooth wall at (3, 3)
+local tiles, blocks = {}, {}
+local function flags_at(x, y) local k = x .. ',' .. y tiles[k] = tiles[k] or {smooth=0, hidden=false} return tiles[k] end
+for bx = 0, 1 do
+    local b = {map_pos={x=bx * 16, y=0, z=5}, flags={designated=(bx == 0)}, designation={}}
+    for x = 0, 15 do
+        b.designation[x] = setmetatable({}, {__index=function(_, y) return flags_at(bx * 16 + x, y) end})
+    end
+    blocks[bx] = b
+end
+removed = {}
+local function job(id, type, x, y, z) return {id=id, job_type=type, pos={x=x, y=y, z=z}} end
+local jobs = {job(1, 10, 1, 1, 5), job(2, 11, 20, 2, 5), job(3, 10, 1, 1, 6), job(4, 99, 2, 2, 5)}
+local function linked()
+    local head = {}
+    local link = head
+    for _, j in ipairs(jobs) do link.next = {item=j}; link = link.next end
+    return head
+end
+df = {global={world={jobs={list=nil}, map={x_count_block=2, y_count_block=1}}},
+      job_type={[10]='SmoothFloor', [11]='DetailWall', [99]='Dig'},
+      tiletype={attrs={[1]={special='NORMAL'}, [2]={special='SMOOTH'}}}, tiletype_special={SMOOTH='SMOOTH'}}
+setmetatable(df.global.world.jobs, {__index=function(_, k) if k == 'list' then return linked() end end})
+dfhack = {isMapLoaded=function() return true end, df2utf=function(s) return s end,
+    maps={isValidTilePos=function(x, y, z) return x >= 0 and y >= 0 and x < 32 and y < 16 and z == 5 end,
+          getTileFlags=function(x, y, z) return flags_at(x, y) end,
+          getBlock=function(i, j, z) return z == 5 and j == 0 and blocks[i] or nil end,
+          getTileType=function(x, y, z) return (x == 3 and y == 3) and 2 or 1 end},
+    job={removeJob=function(j)
+        for i, other in ipairs(jobs) do if other == j then table.remove(jobs, i) end end
+        table.insert(removed, j.id)
+        return true
+    end}}
+assert(loadfile(arg[1]))()
+module.to_json = require('json').encode   -- keep results as tables to look at
+"""
+
+
+def run_detail_marks_lua(body):
+    lua = shutil.which("lua")
+    if lua is None:
+        pytest.skip("Lua interpreter is not installed")
+    source = Path(__file__).parent / "lua/rpc/coop.lua"
+    result = subprocess.run([lua, "-", str(source)], input=SMOOTH_FIXTURE + body, text=True,
+                            capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
+def test_smoothing_marks_go_through_quickfort_with_priority_and_size():
+    run_detail_marks_lua(r"""
+local r = module.detail('smooth', '4', '6', '1', '2', '5', '3')
+assert(r.ok and r.applied == 5 and r.skipped == 3)
+local bp = blueprints[1]
+assert(bp.mode == 'dig' and bp.data == 's3(4x5)' and bp.pos.x == 1 and bp.pos.y == 2 and bp.pos.z == 5)
+assert(module.detail('engrave', '0', '0', '0', '0', '5', '1').ok and blueprints[2].data == 'e1(1x1)')
+assert(module.detail('fortify', '0', '0', '1', '0', '5', '7').ok and blueprints[3].data == 'F7(2x1)')
+for _, bad in ipairs{{'dig', '5', '4'}, {'smooth', '5', '0'}, {'smooth', '5', '8'}, {'smooth', '6', '4'},
+                     {'smooth', '5', 'x'}, {'s', '5', '4'}} do
+    assert(not pcall(module.detail, bad[1], '0', '0', '1', '1', bad[2], bad[3]), bad[1] .. bad[2] .. bad[3])
+end
+assert(not pcall(module.detail, 'smooth', '0', '0', '40', '1', '5', '4'))     -- off the map
+assert(#blueprints == 3)
+""")
+
+
+def test_smoothing_marks_are_read_from_jobs_and_flags_and_erase_clears_both():
+    run_detail_marks_lua(r"""
+-- flags DF hasn't turned into jobs yet: a smooth mark, an engrave mark, a fortify mark on a
+-- smooth wall, and a hidden tile that must not show
+local function flag(x, y, v, hidden) local f = dfhack.maps.getTileFlags(x, y, 5) f.smooth = v f.hidden = hidden or false end
+flag(5, 5, 1); flag(6, 5, 2); flag(3, 3, 1); flag(7, 7, 1, true)
+flag(20, 9, 1)    -- in block 1, which DF hasn't flagged as designated: not looked at
+local m = module.detail_marks('5')['5']
+local got = {}
+for _, t in ipairs(m) do got[#got + 1] = t[1] .. ',' .. t[2] .. ':' .. t[3] end
+table.sort(got)
+assert(table.concat(got, ' ') == '1,1:smooth 20,2:engrave 3,3:fortify 5,5:smooth 6,5:engrave', table.concat(got, ' '))
+assert(next(module.detail_marks('6')) ~= nil and module.detail_marks('6')['6'][1][3] == 'smooth')   -- job on z 6
+assert(not pcall(module.detail_marks, '5;os.exit()'))
+local r = module.detail_erase('0', '0', '10', '10', '5')
+assert(r.ok and r.cleared == 5, r.cleared)          -- flags at 5,5 6,5 3,3 7,7, and job 1 at 1,1
+assert(#removed == 1 and removed[1] == 1)           -- the Dig job and other levels' jobs are left
+assert(dfhack.maps.getTileFlags(5, 5, 5).smooth == 0 and dfhack.maps.getTileFlags(20, 9, 5).smooth == 1)
+""")

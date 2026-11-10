@@ -126,3 +126,11 @@ def test_farm_changes_count_each_plot_once():
     entries = [{"type": "farm_crop", "t": 101, "player": "Bob", "place": 500},
                {"type": "farm_fertilize", "t": 102, "player": "Bob", "place": 500}]
     assert summarize_actions(entries, since=100, me="Alice") == ["Bob changed 1 farm plot"]
+
+
+def test_smoothing_is_described_on_its_own():
+    entries = [{"type": "detail", "t": 101, "player": "Bob", "kind": "smooth", "applied": 30},
+               {"type": "detail", "t": 102, "player": "Bob", "kind": "engrave", "applied": 4},
+               {"type": "detail", "t": 103, "player": "Bob", "kind": "erase", "applied": 2}]
+    assert summarize_actions(entries, since=100, me="Alice") == [
+        "Bob marked 34 tiles to smooth, engrave or fortify; cleared 2 smoothing marks"]

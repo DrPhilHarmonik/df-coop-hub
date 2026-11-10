@@ -58,11 +58,12 @@ class FakeDF:
         self.lua_calls = []
         self.year, self.tick = 23, 147722
         self.apply_stats = None  # override what the fake quickfort reports
-        self.lua_version = "19"
+        self.lua_version = "20"
         self.detail_data = {"details": [{"i": 0, "name": "Miners", "mode": "OnlySelectedDoesThis", "no_everybody": True,
                                          "labors": ["MINE", "HAUL_STONE"], "members": [7]}],
                             "people": [{"id": 7, "name": "Urist"}, {"id": 8, "name": "Bomrek"}]}
         self.detail_reply = {"ok": True}
+        self.detail_marks = {}           # coop.lua detail_marks: {"z": [[x, y, kind]]}
         self.citizen_list = [
             {"id": 7, "name": "Urist, miner", "profession": "Miner", "job": "Dig", "stress": 1, "squad": "The Axes",
              "x": 3, "y": 4, "z": 5},
@@ -173,6 +174,18 @@ class FakeDF:
             return [json.dumps(self.detail_data)]
         if function in ("work_detail_member", "work_detail_mode"):
             return [json.dumps(self.detail_reply)]
+        if function == "detail":
+            kind, x1, y1, x2, y2, z, priority = args
+            area = (int(x2) - int(x1) + 1) * (int(y2) - int(y1) + 1)
+            self.detail_marks.setdefault(z, []).append([int(x1), int(y1), kind])
+            return [json.dumps({"ok": True, "applied": area - 1, "skipped": 1})]
+        if function == "detail_erase":
+            cleared = sum(len(v) for v in self.detail_marks.values())
+            self.detail_marks = {}
+            return [json.dumps({"ok": True, "cleared": cleared})]
+        if function == "detail_marks":
+            levels = set(args[0].split(","))
+            return [json.dumps({z: m for z, m in self.detail_marks.items() if z in levels} or [])]
         if function == "units":
             # As coop.lua: the levels asked for, nothing gone, dead or in ambush, nothing on a
             # hidden tile; gear and baby only when asked.
@@ -3361,3 +3374,69 @@ def test_units_come_from_coop_lua_for_the_players_levels_and_rfr_for_older_modul
     alice.last_units = None
     run(hub.poll_units())
     assert rfr_calls and {u["i"] for u in json.loads(alice.last_units)["units"]} == {1}
+
+
+def test_smoothing_goes_through_coop_lua_shows_its_marks_and_erase_clears_them():
+    async def go():
+        hub, df, stop, task, port = await start()
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as a, \
+                       connect(f"ws://127.0.0.1:{port}/ws?token=tok-b") as b:
+                await recv_until(a, "hello")
+                await recv_until(b, "hello")
+                await a.send(json.dumps({"type": "dig", "kind": "smooth", "x1": 3, "y1": 2, "x2": 1, "y2": 4, "z": 5,
+                                         "priority": 2}))
+                r = await recv_until(a, "dig_result")
+                assert r["ok"] and r["kind"] == "smooth" and (r["applied"], r["skipped"]) == (8, 1)
+                assert lua_call(df, "detail") == ("rpc.coop", "detail", "smooth", "1", "2", "3", "4", "5", "2")
+                assert not [c for c in df.lua_calls if c[1] == "set_priority_spans"]   # quickfort set it
+                m = await recv_until(b, "detail_marks", lambda m: m["marks"])
+                assert m["marks"] == [[1, 2, 5, "s"]]
+                await a.send(json.dumps({"type": "dig", "kind": "erase", "x1": 0, "y1": 0, "x2": 5, "y2": 5, "z": 5}))
+                assert (await recv_until(a, "dig_result"))["ok"]
+                assert lua_call(df, "detail_erase") == ("rpc.coop", "detail_erase", "0", "0", "5", "5", "5")
+                assert (await recv_until(b, "detail_marks", lambda m: not m["marks"]))["marks"] == []
+                kinds = [(e["kind"], e["applied"]) for e in hub.action_log.entries() if e["type"] == "detail"]
+                assert kinds == [("smooth", 8), ("erase", 1)]
+                hub.owners.by_tile.clear()
+                hub.owners.replay(hub.action_log)
+                assert not any(t[2] == 5 and t[0] < 4 and t[1] < 5 for t in hub.owners.by_tile)
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+@pytest.mark.parametrize("role,allowed", [("miner", True), ("builder", True), ("quartermaster", False), ("visitor", False)])
+def test_smoothing_needs_the_dig_permission(role, allowed):
+    async def go():
+        hub, df, stop, task, port = await start_with_roles({"Alice": role})
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps({"type": "dig", "kind": "engrave", "x1": 1, "y1": 1, "x2": 2, "y2": 2, "z": 5}))
+                if allowed:
+                    assert (await recv_until(ws, "dig_result"))["ok"]
+                else:
+                    assert (await recv_until(ws, "denied"))["action"] == "dig"
+                    assert not [c for c in df.lua_calls if c[1] == "detail"]
+        finally:
+            await finish(stop, task)
+    run(go())
+
+
+def test_smoothing_needs_the_new_module_and_erase_still_works_without_it():
+    async def go():
+        df = FakeDF()
+        df.lua_version = "19"
+        hub, df, stop, task, port = await start(df)
+        try:
+            async with connect(f"ws://127.0.0.1:{port}/ws?token=tok-a") as ws:
+                await recv_until(ws, "hello")
+                await ws.send(json.dumps({"type": "dig", "kind": "fortify", "x1": 1, "y1": 1, "x2": 2, "y2": 2, "z": 5}))
+                assert "install-lua" in (await recv_until(ws, "dig_result"))["error"]
+                await ws.send(json.dumps({"type": "dig", "kind": "erase", "x1": 1, "y1": 1, "x2": 2, "y2": 2, "z": 5}))
+                assert (await recv_until(ws, "dig_result"))["ok"]
+                assert not [c for c in df.lua_calls if c[1] in ("detail", "detail_erase", "detail_marks")]
+        finally:
+            await finish(stop, task)
+    run(go())

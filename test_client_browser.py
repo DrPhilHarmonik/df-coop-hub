@@ -1071,3 +1071,77 @@ def test_farm_plots_are_clickable_only_with_the_new_module(browser_page):
       st.canFarms = true; pickCorner();
     }""")
     assert [m["id"] for m in page.evaluate("window.sent")] == [500]
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_smoothing_tools_appear_with_the_module_send_marks_and_draw_them(browser_page, width):
+    page = browser_page
+    page.set_viewport_size({"width": width, "height": 800})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    serve_client(page)
+    assert page.locator("#detailbtn").is_hidden()
+    page.evaluate("""() => {
+      st.perms = new Set(['dig']); st.role = 'miner';
+      onMessage({type: 'hello', you: {id: 1, name: 'Alice', role: 'miner', perms: ['dig', 'chat']},
+                 map: {w: 16, h: 16, d: 3}, view: {x: 8, y: 8, z: 1}, tiles: [], catalog: [],
+                 order_catalog: {groups: [], orders: [], frequencies: [], moves: []}, orders: [], squads: [],
+                 nobles: [], reports: [], chat: [],
+                 can_detail: true});
+      window.sent = [];
+      send = (m) => window.sent.push(m);
+    }""")
+    assert page.locator("#detailbtn").is_visible()
+    page.keyboard.press("m")
+    page.keyboard.press("v")
+    assert page.evaluate("st.mode") == "smooth"
+    page.keyboard.press("v")                            # v cycles, like stairs
+    assert page.evaluate("st.mode") == "engrave"
+    page.keyboard.press("v")
+    assert page.evaluate("st.mode") == "fortify"
+    assert page.locator("#detailname").inner_text() == "Fortify"
+    page.keyboard.press("i")
+    assert page.evaluate("st.mode") == "engrave"
+    page.keyboard.press("f")
+    assert page.evaluate("st.mode") == "fortify"
+    page.evaluate("setMode('dig')")
+    page.click("#detailbtn")                            # the button remembers fortify, then cycles
+    assert page.evaluate("st.mode") == "fortify"
+    page.click("#detailbtn")
+    assert page.evaluate("st.mode") == "smooth" and page.locator("#detailname").inner_text() == "Smooth"
+    assert page.evaluate("!$('prio').hidden")          # priority applies to these too
+    page.evaluate("""() => {
+      setMode('smooth'); setPriority(2); st.z = 1;
+      st.cursor = {x: 3, y: 4}; pickCorner();
+      st.cursor = {x: 5, y: 6}; pickCorner();
+    }""")
+    assert page.evaluate("window.sent.pop()") == {"type": "dig", "kind": "smooth", "x1": 3, "y1": 4, "x2": 5, "y2": 6,
+                                                  "z": 1, "priority": 2}
+    page.evaluate("""() => onMessage({type: 'dig_result', ok: true, kind: 'smooth', applied: 6, skipped: 3,
+                                        priority: 2})""")
+    assert "Marked to smooth 6 tiles at priority 2, 3 skipped" in page.locator("#toast").inner_text()
+    # marks arrive and are drawn over a visible tile
+    page.evaluate("""() => {
+      st.map = {w: 16, h: 16, d: 3}; st.z = 1; st.camX = 8; st.camY = 8; st.cell = 24;
+      st.tiles = [['.', '#333', 'floor', false, '']];
+      st.blocks.set('0,0,1', {x: 0, y: 0, z: 1, t: Array(256).fill(0), d: Array(256).fill(0)});
+      onMessage({type: 'detail_marks', marks: [[8, 8, 1, 's'], [9, 8, 1, 'e'], [10, 8, 1, 'f']]});
+      setMode('look');
+    }""")
+    page.wait_for_function("!st.dirty")
+    colors = page.evaluate("""() => {
+      const view = viewport();
+      const edge = (x, y) => Array.from(ctx.getImageData(
+        Math.round((x - view.x0) * st.cell - view.ox + st.cell / 8 - 1),   // on the outline
+        Math.round((y - view.y0 + 0.5) * st.cell - view.oy), 1, 1).data).slice(0, 3);
+      return {s: edge(8, 8), e: edge(9, 8), f: edge(10, 8), none: edge(11, 8)};
+    }""")
+    assert colors["s"][2] > 150 and colors["e"][0] > 150 and colors["f"][2] > 150
+    assert colors["none"] != colors["s"]
+    assert page.evaluate("st.detailMarks.size") == 3
+    # without the module the keys explain instead of switching
+    page.evaluate("st.canDetail = false; setMode('dig')")
+    page.keyboard.press("v")
+    assert page.evaluate("st.mode") == "dig"
+    assert errors == []
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

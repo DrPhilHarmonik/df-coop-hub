@@ -13,7 +13,7 @@ local _ENV = mkmodule('rpc.coop')
 
 local json = require('json')
 
-VERSION = '19'
+VERSION = '20'
 
 -- Results go out through this rather than DFHack's json.encode, which took 15 ms
 -- of a 20 ms unit read and most of the work-order read on a real fort; this does
@@ -674,6 +674,130 @@ function set_priority_spans(encoded, z, priority)
         end
     end
     return to_json{set=count}
+end
+
+-- Smoothing, engraving and fortifications, through quickfort's dig mode, which
+-- knows which tiles qualify (hard natural rock; smooth before engrave; fortify a
+-- smooth wall). DF turns a mark into its own job within a tick and clears the
+-- tile's flag (seen 11-09), so marks are read back from those jobs too, and
+-- erasing cancels the jobs as well as clearing flags.
+local DETAIL_KEYS = {smooth='s', engrave='e', fortify='F'}
+local DETAIL_JOBS = {SmoothFloor='smooth', SmoothWall='smooth', DetailFloor='engrave', DetailWall='engrave',
+                     CarveFortification='fortify'}
+local MAX_DETAIL_SIDE = 200
+
+local function rect(x1, y1, x2, y2, z)
+    x1, y1, x2, y2, z = int(x1, 'x1'), int(y1, 'y1'), int(x2, 'x2'), int(y2, 'y2'), int(z, 'z')
+    if x2 < x1 then x1, x2 = x2, x1 end
+    if y2 < y1 then y1, y2 = y2, y1 end
+    if not dfhack.maps.isValidTilePos(x1, y1, z) or not dfhack.maps.isValidTilePos(x2, y2, z) then
+        error('rectangle outside the map')
+    end
+    if x2 - x1 >= MAX_DETAIL_SIDE or y2 - y1 >= MAX_DETAIL_SIDE then error('rectangle too large') end
+    return x1, y1, x2, y2, z
+end
+
+local function detail_jobs()
+    local out = {}
+    local link = df.global.world.jobs.list.next
+    while link do
+        local j = link.item
+        local kind = j and DETAIL_JOBS[df.job_type[j.job_type]]
+        if kind then out[#out + 1] = {job=j, kind=kind} end
+        link = link.next
+    end
+    return out
+end
+
+function detail(kind, x1, y1, x2, y2, z, priority)
+    if not dfhack.isMapLoaded() then error('no fortress loaded') end
+    local key = DETAIL_KEYS[kind]
+    if not key then error('unknown kind: ' .. tostring(kind)) end
+    x1, y1, x2, y2, z = rect(x1, y1, x2, y2, z)
+    local p = int(priority, 'priority')
+    if p < 1 or p > 7 then error('priority must be 1 to 7') end
+    local stats = reqscript('quickfort').apply_blueprint{
+        mode='dig', data=('%s%d(%dx%d)'):format(key, p, x2 - x1 + 1, y2 - y1 + 1), pos={x=x1, y=y1, z=z}}
+    local function value(id) return stats[id] and stats[id].value or 0 end
+    return to_json{ok=true, applied=value('dig_designated'),
+                   skipped=value('dig_invalid_tiles') + value('dig_protected_engraving')}
+end
+
+-- Clear smoothing, engraving and fortification marks in the rectangle, and cancel
+-- the jobs DF made from them. Dig marks are left alone: they're RFR's to erase.
+function detail_erase(x1, y1, x2, y2, z)
+    if not dfhack.isMapLoaded() then error('no fortress loaded') end
+    x1, y1, x2, y2, z = rect(x1, y1, x2, y2, z)
+    local cleared = 0
+    for x = x1, x2 do
+        for y = y1, y2 do
+            local flags = dfhack.maps.getTileFlags(x, y, z)
+            if flags and flags.smooth ~= 0 then
+                flags.smooth = 0
+                cleared = cleared + 1
+            end
+        end
+    end
+    for _, d in ipairs(detail_jobs()) do
+        local pos = d.job.pos
+        if pos.z == z and pos.x >= x1 and pos.x <= x2 and pos.y >= y1 and pos.y <= y2
+                and dfhack.job.removeJob(d.job) then
+            cleared = cleared + 1
+        end
+    end
+    return to_json{ok=true, cleared=cleared}
+end
+
+-- Every smoothing, engraving and fortification mark on these levels (comma-separated
+-- z): {z={{x, y, kind}, ...}}, from DF's jobs and from flags not yet turned into
+-- jobs. Only blocks DF has flagged as designated are looked at.
+function detail_marks(levels)
+    if not dfhack.isMapLoaded() then error('no fortress loaded') end
+    if type(levels) ~= 'string' or not levels:match('^%d+[%d,]*$') or #levels > 400 then
+        error('bad levels: ' .. tostring(levels))
+    end
+    local zs, out, seen = {}, {}, {}
+    for z in levels:gmatch('%d+') do zs[tonumber(z)] = true end
+    local function add(x, y, z, kind)
+        local key = x .. ',' .. y .. ',' .. z
+        if seen[key] then return end
+        seen[key] = true
+        local list = out[tostring(z)] or {}
+        out[tostring(z)] = list
+        list[#list + 1] = {x, y, kind}
+    end
+    for _, d in ipairs(detail_jobs()) do
+        local pos = d.job.pos
+        if zs[pos.z] then add(pos.x, pos.y, pos.z, d.kind) end
+    end
+    local bx, by = df.global.world.map.x_count_block, df.global.world.map.y_count_block
+    for z in pairs(zs) do
+        for i = 0, bx - 1 do
+            for j = 0, by - 1 do
+                local b = dfhack.maps.getBlock(i, j, z)
+                if b and b.flags.designated then
+                    for x = 0, 15 do
+                        for y = 0, 15 do
+                            local d = b.designation[x][y]
+                            if d.smooth ~= 0 and not d.hidden then
+                                -- 1 marks smoothing (a fortification on a smooth wall), 2 engraving.
+                                local tx, ty = b.map_pos.x + x, b.map_pos.y + y
+                                local kind = d.smooth == 2 and 'engrave' or 'smooth'
+                                if d.smooth == 1 then
+                                    local tt = dfhack.maps.getTileType(tx, ty, z)
+                                    if tt and df.tiletype.attrs[tt].special == df.tiletype_special.SMOOTH then
+                                        kind = 'fortify'
+                                    end
+                                end
+                                add(tx, ty, z, kind)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return to_json(out)
 end
 
 -- Creatures players can see on the levels they're looking at (`levels` is a
